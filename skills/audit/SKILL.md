@@ -430,7 +430,7 @@ If `--save` flag: write full report to specified path.
 Group fixable findings by repo. Separate unfixable findings for reporting.
 
 **Unfixable (skip and report):**
-- API surface fixes (complex — delegate to `/apcore-skills:sync --fix`)
+- API surface fixes (complex — delegate to `/apcore-skills:sync --phase a --fix`)
 - Dependency fixes (risky — show as recommendations only)
 
 **Fixable (per-repo parallel sub-agents):**
@@ -482,7 +482,8 @@ Tests after fix:
   {repo-2}: {pass}/{total} passing ✓
 
 Unfixed (manual action needed):
-  [D1-001] API surface gap — use /apcore-skills:sync --fix
+  [D1-001] API surface gap — use /apcore-skills:sync --phase a --fix
+  [D4-xxx] Doc inconsistency — use /apcore-skills:sync --phase b for deep check
   [D6-002] Dependency version — manually update {package}
 
 Review changes:
