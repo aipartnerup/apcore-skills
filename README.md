@@ -46,6 +46,7 @@ The apcore ecosystem consists of:
 2. The `apcore/` protocol repo with `PROTOCOL_SPEC.md` is required for `sync` and `sdk` commands
 3. No config file needed — ecosystem discovery is automatic based on directory naming conventions
 4. Optional: `.apcore-skills.json` in the ecosystem root to customize discovery and version groups
+5. **[code-forge](https://github.com/tercel/code-forge)** skill required for `sdk` and `integration` commands (generates `.code-forge.json` and uses `code-forge:port`, `code-forge:plan`, `code-forge:impl`)
 
 ## Integration with Other Skills
 

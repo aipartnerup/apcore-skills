@@ -90,6 +90,8 @@ Default type mappings:
 | Async | `async def` | `async function` | goroutine | `async fn` | `CompletableFuture` |
 | Callback | `Callable` | `(...) => T` | `func(...)` | `Fn(...)` | `Function<T,R>` |
 
+> **Note:** This table covers common single-level generics. For nested generics (e.g., `Result<Option<List<T>>, E>`), rely on language-specific type system knowledge rather than mechanical mapping. When in doubt, flag ambiguous type translations in the comparison output for manual review.
+
 #### Comparison Output Format
 
 ```

@@ -343,9 +343,9 @@ Write `{target-path}/.code-forge.json`:
 }
 ```
 
-Initialize git:
+Initialize git (skip if already a git repo):
 ```bash
-cd {target-path} && git init && git add . && git commit -m "chore: initialize {target-repo-name} project skeleton"
+cd {target-path} && [ -d .git ] || git init && git add . && git commit -m "chore: initialize {target-repo-name} project skeleton"
 ```
 
 ---
