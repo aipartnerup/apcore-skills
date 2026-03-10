@@ -115,7 +115,7 @@ Phase A Step 2 spawns **one sub-agent per implementation repo, all simultaneousl
 ## Workflow
 
 ```
-Step 0 (ecosystem) → Step 1 (parse args) → PHASE A [Steps 2-5] → PHASE B [Steps 6-8] → Step 9 (combined report) → [Step 10 (fix)]
+Step 0 (ecosystem) → Step 1 (parse args) → PHASE A [Steps 2-5] → PHASE B [Steps 6-8] → Step 9 (combined report + review-compatible output) → [Step 10 (fix)]
 ```
 
 ---
@@ -743,6 +743,91 @@ INFO:
 ```
 
 If `--save` flag: write report to `{ecosystem_root}/sync-report-{date}.md`.
+
+#### 9.1 Review-Compatible Issue Report
+
+**After the Combined Report, ALWAYS append a review-compatible report so that `/code-forge:fixbug --review` can directly consume it.**
+
+Convert all CRITICAL and WARNING findings from both phases into `code-forge:review` format. Format follows `code-forge:review` output schema (see `code-forge/skills/review/SKILL.md`). If the review format changes, update this mapping accordingly.
+
+Use the `# Project Review:` header with a **dynamic scope description** (derived from Step 1 — e.g., repo name, scope group, or "all") and structured issue entries. Output the review-compatible report as **raw markdown** (not inside a fenced code block) so that fixbug can parse it from the conversation context.
+
+```markdown
+# Project Review: {scope_description}
+
+## Consistency
+
+{For each finding from Phase A and Phase B with severity critical or warning, emit one issue entry:}
+
+- severity: <blocker | critical | warning>
+  file: {target file path — the file that needs to be fixed}
+  line: {line number or range, use 1 if unknown}
+  title: [{finding_id}] {short title}
+  description: {what is inconsistent and why it matters — include cross-reference to spec or other repo}
+  suggestion: {concrete fix instruction — what to change, what to match against}
+```
+
+**Severity mapping from sync findings to review format:**
+
+| Sync Severity | Review Severity | Condition |
+|---------------|-----------------|-----------|
+| critical | blocker | Missing API (symbol defined in spec but absent from implementation) |
+| critical | critical | Signature mismatch, type mismatch, spec chain contradiction |
+| warning | warning | Naming inconsistency, doc mismatch, missing README section |
+| info | _(skip)_ | Not included — info-level findings are not actionable bugs |
+
+**Rules:**
+- Group issues by file for efficient batch fixing
+- The `file` field MUST point to the **implementation or doc file that needs changing** (not the spec file)
+- The `suggestion` field MUST be concrete enough for fixbug to act on directly (e.g., "Rename `findModule` to `getModule` to match spec" rather than "fix naming")
+- For missing API stubs, include the expected signature from the spec in the `suggestion`
+- For doc mismatches, include the correct value from `verified_api` in the `suggestion`
+
+**Example output:**
+
+```markdown
+# Project Review: {scope_description}
+
+## Consistency
+
+- severity: blocker
+  file: apcore-typescript/src/registry.ts
+  line: 1
+  title: [A-001] Missing API — Registry.scanDirectory()
+  description: Registry.scan_directory() is defined in apcore/docs/features/registry.md and implemented in apcore-python, but missing from apcore-typescript.
+  suggestion: Add `scanDirectory(path: string, options?: ScanOptions): Promise<Module[]>` method to Registry class, matching the spec signature.
+
+- severity: critical
+  file: apcore-typescript/src/executor.ts
+  line: 42
+  title: [A-003] Param mismatch — Executor.execute() missing context param
+  description: Spec defines execute(moduleId, input, context?) but TypeScript implementation only has execute(moduleId, input). Missing optional context parameter.
+  suggestion: Add optional `context?: Context` as third parameter to `execute()` method.
+
+- severity: critical
+  file: apcore/docs/prd.md
+  line: 87
+  title: [B-001] Spec chain contradiction — glob patterns
+  description: PRD §3.2 says "Registry supports glob patterns" but feature spec registry.md defines no glob parameter. Documents disagree.
+  suggestion: Remove glob pattern reference from PRD §3.2 to match feature spec, or add glob parameter to feature spec if the capability is intended.
+
+- severity: warning
+  file: apcore-typescript/README.md
+  line: 35
+  title: [B-002] API reference mismatch — findModule vs getModule
+  description: README Quick Start uses `findModule()` but verified API says `getModule()`.
+  suggestion: Replace `findModule(` with `getModule(` in README Quick Start code example.
+```
+
+If no CRITICAL or WARNING findings exist, still output the header with a note:
+
+```markdown
+# Project Review: {scope_description}
+
+## Consistency
+
+_(No actionable issues found — all checks passed.)_
+```
 
 ---
 
