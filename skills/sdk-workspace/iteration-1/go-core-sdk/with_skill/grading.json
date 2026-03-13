@@ -1,0 +1,16 @@
+{
+  "eval_id": 1,
+  "eval_name": "go-core-sdk",
+  "configuration": "with_skill",
+  "expectations": [
+    {"text": "tests/ contains individual test files for each core module", "passed": true, "evidence": "16 top-level test files: executor_test.go, client_test.go, context_test.go, module_test.go, config_test.go, errors_test.go, acl_test.go, approval_test.go, async_task_test.go, bindings_test.go, cancel_test.go, decorator_test.go, extensions_test.go, trace_context_test.go, version_test.go, plus helpers_test.go"},
+    {"text": "tests/ includes a shared fixtures/helper file", "passed": true, "evidence": "helpers_test.go provides newMockExecutor(), sampleContext(), sampleModuleConfig() factory functions"},
+    {"text": "tests/ has subdirectories: integration/, registry/, schema/, observability/", "passed": true, "evidence": "All 4 present plus additional: middleware/ (5 tests), events/ (2 tests), sysmodules/ (5 tests), integration/ (10 tests), conformance/ (1 test), examples/ (1 test)"},
+    {"text": "Test stubs contain failing assertions using Go convention", "passed": true, "evidence": "Tests use t.Fatal(\"not implemented\") pattern, shown in executor_test.go example code"},
+    {"text": "examples/ directory is present", "passed": true, "evidence": "examples/ directory with 8 runnable Go files + 1 YAML binding config"},
+    {"text": "examples/ contains a simple_client.go example", "passed": true, "evidence": "examples/simple_client.go present with complete runnable code: NewAPCore(), Register(), Call(), error handling, fmt.Printf"},
+    {"text": "examples/ contains modules/ with greet, get_user, send_email", "passed": true, "evidence": "examples/modules/ contains greet.go, get_user.go, send_email.go, plus decorated_add.go (from reference sync)"},
+    {"text": "Step 7 summary includes a Tests count", "passed": true, "evidence": "Summary shows 'Tests: 63 test stubs (TDD red phase)'"},
+    {"text": "Step 7 summary includes an Examples count", "passed": true, "evidence": "Summary shows 'Examples: 8 runnable examples (+ 1 YAML binding config)'"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "eval_id": 2,
+  "eval_name": "rust-mcp-bridge",
+  "configuration": "old_skill",
+  "expectations": [
+    {"text": "tests/ has subdirectories mirroring MCP src structure", "passed": false, "evidence": "tests/ directory gets only a test-config placeholder. No subdirectories created"},
+    {"text": "tests/ has top-level test stubs: test_api, test_cli, test_helpers", "passed": false, "evidence": "No test source files created in tests/"},
+    {"text": "examples/ contains a run.rs main entry point", "passed": false, "evidence": "No examples/ directory in the MCP bridge scaffold template"},
+    {"text": "examples/extensions/ contains greeting, math_calc, text_echo", "passed": false, "evidence": "No examples/ directory exists"},
+    {"text": "examples/binding_demo/ directory exists", "passed": false, "evidence": "No examples/ directory exists"},
+    {"text": "Step 2 output includes EXAMPLES section", "passed": false, "evidence": "Old skill Step 2 output format has no EXAMPLES section — only MODULES, ERROR_HIERARCHY, EXTENSION_POINTS"},
+    {"text": "Step 2 output includes TESTS section", "passed": false, "evidence": "Old skill Step 2 output format has no TESTS section"}
+  ]
+}

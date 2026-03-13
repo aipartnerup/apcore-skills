@@ -35,6 +35,13 @@ Scan `ecosystem_root` for known repository patterns:
 | `apcore-mcp-typescript/` | `mcp-bridge` | TypeScript | `apcore-mcp` |
 | `apcore-mcp-{lang}/` | `mcp-bridge` | `{lang}` | varies |
 
+**Other project types** (A2A bridges, toolkits, and future types follow the `apcore-{type}-{lang}` pattern):
+| Directory Pattern | Repo Type | Language | Package Name |
+|---|---|---|---|
+| `apcore-{type}-{lang}/` | `{type}` | `{lang}` | `apcore-{type}` |
+
+**Match priority:** Specific patterns (core-sdk, mcp-bridge, shared-lib, integration, docs-site, placeholder) are checked first. The `apcore-{type}-{lang}` wildcard is a fallback for repos that don't match any specific pattern.
+
 **Framework Integrations:**
 | Directory Pattern | Repo Type | Language | Framework |
 |---|---|---|---|
@@ -48,7 +55,6 @@ Scan `ecosystem_root` for known repository patterns:
 | Directory Pattern | Repo Type | Language |
 |---|---|---|
 | `apcore-discovery-python/` | `shared-lib` | Python |
-| `apcore-toolkit-python/` | `shared-lib` | Python |
 
 **Documentation Sites:**
 | Directory Pattern | Repo Type | Description |
@@ -85,10 +91,13 @@ Determine `cwd_repo` — the repo the user is currently working in:
 3. If matched, store `cwd_repo = { name, type, language, scope_group }`:
    - `core-sdk` → `scope_group = "core"`
    - `mcp-bridge` → `scope_group = "mcp"`
+   - `a2a-bridge` → `scope_group = "a2a"`
+   - `toolkit` → `scope_group = "toolkit"`
    - `integration` → `scope_group = "integrations"`
    - `protocol` / `docs-site` → `scope_group = "docs"`
    - `shared-lib` → `scope_group = "shared"`
    - `tooling` → `scope_group = "tooling"`
+   - Other `apcore-{type}-{lang}` patterns → `scope_group = "{type}"`
 4. If not matched, `cwd_repo = null`
 
 This is used by sync, audit, and release as the **default scope** when `--scope` is not specified. If `cwd_repo` is null (CWD is not an apcore repo), each skill should use `AskUserQuestion` to let the user pick a target repo instead of silently scanning everything.
@@ -106,6 +115,7 @@ Load configuration by priority (deep-merge):
    - `reference_mcp.typescript` = `"apcore-mcp-typescript"`
    - `version_groups.core` = `["apcore-python", "apcore-typescript"]`
    - `version_groups.mcp` = `["apcore-mcp-python", "apcore-mcp-typescript"]`
+   - Other `version_groups.{type}` are auto-populated from discovered `apcore-{type}-{lang}` repos
 
 2. **User global config** (`~/.apcore-skills.json`, if exists) → deep-merge
 
@@ -159,6 +169,7 @@ Track resolved values for subsequent steps:
 - `ecosystem_root` — absolute path
 - `repos[]` — discovered repositories with metadata
 - `protocol_path` — path to apcore protocol repo
-- `core_sdks[]` — core SDK repos (for sync operations)
-- `mcp_bridges[]` — MCP bridge repos (for sync operations)
-- `integrations[]` — framework integration repos
+- `repos_by_type{}` — repos grouped by type (core-sdk, mcp-bridge, a2a-bridge, toolkit, integration, etc.)
+- `core_sdks[]` — shortcut for repos_by_type["core-sdk"]
+- `mcp_bridges[]` — shortcut for repos_by_type["mcp-bridge"]
+- `integrations[]` — shortcut for repos_by_type["integration"]

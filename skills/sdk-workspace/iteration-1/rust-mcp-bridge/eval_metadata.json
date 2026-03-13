@@ -1,0 +1,14 @@
+{
+  "eval_id": 2,
+  "eval_name": "rust-mcp-bridge",
+  "prompt": "/apcore-skills:sdk rust --type mcp --ref apcore-mcp-python",
+  "assertions": [
+    "tests/ has subdirectories mirroring MCP src structure: server/, auth/, adapters/, converters/, explorer/",
+    "tests/ has top-level test stubs: test_api, test_cli, test_helpers",
+    "examples/ contains a run.rs main entry point",
+    "examples/extensions/ contains greeting, math_calc, text_echo example files",
+    "examples/binding_demo/ directory exists with run file and extensions/",
+    "Step 2 API contract output includes an EXAMPLES section listing reference example files",
+    "Step 2 API contract output includes a TESTS section listing reference test structure"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "eval_id": 2,
+  "eval_name": "rust-mcp-bridge",
+  "configuration": "with_skill",
+  "expectations": [
+    {"text": "tests/ has subdirectories mirroring MCP src structure", "passed": true, "evidence": "tests/ contains server/, auth/, adapters/, converters/, explorer/ subdirectories with test files in each"},
+    {"text": "tests/ has top-level test stubs: test_api, test_cli, test_helpers", "passed": true, "evidence": "test_api.rs, test_cli.rs, test_helpers.rs present plus test_apcore_mcp.rs, test_async_serve.rs, test_logging.rs"},
+    {"text": "examples/ contains a run.rs main entry point", "passed": true, "evidence": "examples/run.rs present as main entry point for starting MCP server"},
+    {"text": "examples/extensions/ contains greeting, math_calc, text_echo", "passed": true, "evidence": "examples/extensions/ contains greeting.rs, math_calc.rs, text_echo.rs"},
+    {"text": "examples/binding_demo/ directory exists", "passed": true, "evidence": "examples/binding_demo/ present with run.rs and extensions/ subdirectory"},
+    {"text": "Step 2 output includes EXAMPLES section", "passed": true, "evidence": "EXAMPLES section lists 5 reference example files with descriptions"},
+    {"text": "Step 2 output includes TESTS section", "passed": true, "evidence": "TESTS section lists test structure with 8 directories, file inventory, and total_count: 41"}
+  ]
+}

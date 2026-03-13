@@ -6,10 +6,14 @@ Canonical conventions that all apcore repositories must follow. Used by audit, s
 
 **Sync Groups** — versions within a group MUST match (major.minor):
 
-| Group | Repos | Rationale |
+Repos of the same type form a sync group automatically. The group name is the type.
+
+| Group | Pattern | Examples |
 |---|---|---|
-| `core` | apcore-python, apcore-typescript, (future core SDKs) | Same protocol, same API surface |
-| `mcp` | apcore-mcp-python, apcore-mcp-typescript, (future MCP bridges) | Same MCP contract |
+| `core` | `apcore-{lang}` | apcore-python, apcore-typescript, apcore-go |
+| *{type}* | `apcore-{type}-{lang}` | apcore-mcp-python, apcore-a2a-go, apcore-toolkit-java, etc. |
+
+New types are auto-discovered — any repo matching `apcore-{type}-{lang}` forms a sync group named `{type}`.
 
 **Integration versions** are independent — they follow their own release cadence.
 
@@ -26,19 +30,24 @@ Canonical conventions that all apcore repositories must follow. Used by audit, s
 #### Naming Conventions
 
 **Repository naming:**
-- Core SDKs: `apcore-{language}` (e.g., `apcore-python`, `apcore-go`, `apcore-java`)
-- MCP bridges: `apcore-mcp-{language}` (e.g., `apcore-mcp-python`, `apcore-mcp-go`)
-- Framework integrations: `{framework}-apcore` (e.g., `django-apcore`, `flask-apcore`, `nestjs-apcore`)
-- Shared libraries: `apcore-{purpose}-{language}` (e.g., `apcore-discovery-python`)
+
+General pattern: `apcore-{type}-{language}` — with two exceptions:
+- Core SDKs omit the type: `apcore-{language}` (e.g., `apcore-python`, `apcore-go`)
+- Framework integrations invert: `{framework}-apcore` (e.g., `django-apcore`, `nestjs-apcore`)
+
+Examples: `apcore-mcp-go`, `apcore-a2a-rust`, `apcore-toolkit-java`, `apcore-gateway-python` (future types follow the same pattern automatically)
 
 **Package naming:**
-| Language | Core SDK | MCP Bridge | Integration |
+
+General pattern: `apcore-{type}` (same as repo name without the language suffix). New types follow this automatically.
+
+| Language | Core SDK | Other types (e.g., mcp, a2a, toolkit) | Integration |
 |---|---|---|---|
-| Python (PyPI) | `apcore` | `apcore-mcp` | `{framework}-apcore` |
-| TypeScript (npm) | `apcore-js` | `apcore-mcp` | `{framework}-apcore` |
-| Go (module) | `github.com/aipartnerup/apcore-go` | `github.com/aipartnerup/apcore-mcp-go` | — |
-| Rust (crates) | `apcore` | `apcore-mcp` | — |
-| Java (Maven) | `com.aipartnerup:apcore` | `com.aipartnerup:apcore-mcp` | — |
+| Python (PyPI) | `apcore` | `apcore-{type}` | `{framework}-apcore` |
+| TypeScript (npm) | `apcore-js` | `apcore-{type}` | `{framework}-apcore` |
+| Go (module) | `github.com/aipartnerup/apcore-go` | `github.com/aipartnerup/apcore-{type}-go` | — |
+| Rust (crates) | `apcore` | `apcore-{type}` | — |
+| Java (Maven) | `com.aipartnerup:apcore` | `com.aipartnerup:apcore-{type}` | — |
 
 **Code naming (cross-language canonical forms):**
 
@@ -53,6 +62,8 @@ All public API names originate from the protocol spec. When implementing in a la
 | `BINDING_NOT_FOUND` | `BINDING_NOT_FOUND` | `BINDING_NOT_FOUND` | `ErrBindingNotFound` | `BINDING_NOT_FOUND` | `BINDING_NOT_FOUND` | `BindingNotFound` | `BINDING_NOT_FOUND` | `bindingNotFound` | `BINDING_NOT_FOUND` |
 
 #### Project Structure Convention
+
+Every project type follows the same skeleton: `src/`, `tests/` (mirroring src), `examples/` (if applicable), plus build config and docs. The structures below are **snapshots** of current reference implementations — not prescriptive templates. New types derive their structure dynamically from the reference implementation (see `apcore-skills:sdk`). Do not add new type-specific structures here; they will be discovered automatically.
 
 **Core SDK structure:**
 ```
@@ -77,7 +88,17 @@ apcore-{lang}/
 │   ├── schema/
 │   ├── observability/
 │   └── utils/
-├── tests/
+├── tests/                   # one test file per source module + subdirs
+│   ├── {test-config}        # pytest.ini / vitest.config / test runner config
+│   ├── {helpers}            # conftest.py / helpers.ts — shared fixtures
+│   ├── integration/         # cross-component integration tests
+│   ├── registry/            # registry-specific tests
+│   ├── schema/              # schema validation tests
+│   └── observability/       # metrics, tracing, logging tests
+├── examples/                # runnable usage examples
+│   ├── simple_client.{ext}  # basic executor + module + execute flow
+│   ├── bindings/            # binding module examples with YAML config
+│   └── modules/             # decorator-based module examples
 ├── docs/
 ├── {build-config}           # pyproject.toml / package.json / go.mod / Cargo.toml
 ├── README.md
@@ -97,7 +118,93 @@ apcore-mcp-{lang}/
 │   ├── converters/          # OpenAI format export
 │   ├── cli.{ext}            # CLI entry point
 │   └── explorer/            # optional: web UI
-├── tests/
+├── tests/                   # mirrors src/ structure + integration tests
+│   ├── {test-config}
+│   ├── {helpers}            # shared fixtures
+│   ├── server/              # server implementation tests
+│   ├── auth/                # auth middleware tests
+│   ├── adapters/            # adapter tests
+│   ├── converters/          # converter tests
+│   └── explorer/            # explorer tests
+├── examples/                # runnable MCP server examples
+│   ├── run.{ext}            # start server with example extensions
+│   ├── README.md            # setup and usage instructions
+│   ├── extensions/          # example extensions (greeting, math, text)
+│   └── binding_demo/        # YAML-based extension registration
+├── {build-config}
+├── README.md
+├── CHANGELOG.md
+└── LICENSE
+```
+
+**A2A Bridge structure:**
+```
+apcore-a2a-{lang}/
+├── src/
+│   ├── {main module}
+│   ├── server/              # factory, executor, router, streaming, task manager
+│   ├── auth/                # JWT, middleware, protocol
+│   ├── adapters/            # agent card, skill mapper, schema/error/part converters
+│   ├── client/              # A2A client, card fetcher
+│   ├── storage/             # task storage (memory, protocol)
+│   ├── cli.{ext}            # CLI entry point
+│   └── explorer/            # optional: web UI
+├── tests/                   # mirrors src/ structure + integration tests
+│   ├── {test-config}
+│   ├── {helpers}            # shared fixtures
+│   ├── server/              # server tests (executor, factory, router, streaming, task manager)
+│   ├── auth/                # auth tests (JWT, middleware)
+│   ├── adapters/            # adapter tests (agent card, skill mapper, schema, errors, parts)
+│   ├── client/              # client tests
+│   ├── storage/             # storage tests
+│   └── explorer/            # explorer tests
+├── examples/                # runnable A2A server examples
+│   ├── run.{ext}            # start server with example extensions
+│   ├── README.md            # setup and usage instructions
+│   ├── extensions/          # example extensions (greeting, math, text)
+│   └── binding_demo/        # binding configuration examples
+├── {build-config}
+├── README.md
+├── CHANGELOG.md
+└── LICENSE
+```
+
+**Toolkit structure:**
+```
+apcore-toolkit-{lang}/
+├── src/
+│   ├── {main module}
+│   ├── scanner.{ext}        # base scanner interface
+│   ├── types.{ext}          # shared types (ScannedModule, WriteResult)
+│   ├── schema_utils.{ext}   # schema enrichment utilities
+│   ├── serializers.{ext}    # module serialization
+│   ├── ai_enhancer.{ext}    # AI-powered schema description enrichment
+│   ├── openapi.{ext}        # OpenAPI spec parsing
+│   ├── formatting/          # output formatters
+│   │   └── markdown.{ext}
+│   └── output/              # writers and verifiers
+│       ├── factory.{ext}
+│       ├── {lang}_writer.{ext}
+│       ├── yaml_writer.{ext}
+│       ├── registry_writer.{ext}
+│       ├── verifiers.{ext}
+│       ├── types.{ext}
+│       └── errors.{ext}
+├── tests/                   # one test file per source module
+│   ├── {test-config}
+│   ├── {helpers}
+│   ├── {test-scanner}
+│   ├── {test-types}
+│   ├── {test-schema-utils}
+│   ├── {test-serializers}
+│   ├── {test-ai-enhancer}
+│   ├── {test-openapi}
+│   ├── {test-markdown}
+│   ├── {test-yaml-writer}
+│   ├── {test-lang-writer}
+│   ├── {test-registry-writer}
+│   ├── {test-verifiers}
+│   └── {test-output-factory}
 ├── {build-config}
 ├── README.md
 ├── CHANGELOG.md
@@ -151,18 +258,21 @@ apcore-mcp-{lang}/
 
 #### Dependency Conventions
 
-**Core SDKs depend on:**
+**General rule:** All non-core project types depend on their respective core SDK (`apcore-{lang}`). Protocol-specific types also depend on the relevant protocol SDK.
+
+**Core SDKs** — no external SDK dependencies:
 - Schema validation: Pydantic (Python), TypeBox (TypeScript)
 - YAML parsing: PyYAML (Python), js-yaml (TypeScript)
-- No framework dependencies
 
-**MCP Bridges depend on:**
-- Their respective core SDK
-- MCP SDK: `mcp` (Python), `@modelcontextprotocol/sdk` (TypeScript)
-- JWT: `pyjwt` (Python), `jsonwebtoken` (TypeScript)
+**Protocol bridge types** (mcp, a2a, etc.) — core SDK + protocol SDK:
+- MCP: `mcp` (Python), `@modelcontextprotocol/sdk` (TypeScript)
+- A2A: `a2a-sdk` (Python), `a2a-sdk` (TypeScript)
+- JWT (common for bridges): `pyjwt` (Python), `jsonwebtoken` (TypeScript)
 
-**Integrations depend on:**
-- Their respective core SDK
+**Utility types** (toolkit, etc.) — core SDK + domain libraries:
+- Schema: Pydantic (Python), TypeBox (TypeScript)
+- YAML: PyYAML (Python), js-yaml (TypeScript)
+
+**Integrations** — core SDK + target framework:
 - Their respective MCP bridge (optional)
-- The target framework
 - `apcore-discovery-{lang}` (if shared scanner utils exist)

@@ -1,0 +1,61 @@
+{
+  "skill_name": "sdk",
+  "iteration": 1,
+  "configurations": [
+    {
+      "name": "with_skill",
+      "label": "Updated SDK (with examples/tests sync)",
+      "results": {
+        "pass_rate": 1.0,
+        "total_assertions": 20,
+        "passed_assertions": 20,
+        "mean_tokens": 49070,
+        "mean_duration_seconds": 228.7
+      }
+    },
+    {
+      "name": "old_skill",
+      "label": "Old SDK (no examples/tests)",
+      "results": {
+        "pass_rate": 0.0,
+        "total_assertions": 20,
+        "passed_assertions": 0,
+        "mean_tokens": 40880,
+        "mean_duration_seconds": 169.8
+      }
+    }
+  ],
+  "evals": [
+    {
+      "eval_name": "go-core-sdk",
+      "with_skill": {"pass_rate": 1.0, "passed": 9, "total": 9, "tokens": 43234, "duration_seconds": 219.5},
+      "old_skill": {"pass_rate": 0.0, "passed": 0, "total": 9, "tokens": 51111, "duration_seconds": 197.5}
+    },
+    {
+      "eval_name": "rust-mcp-bridge",
+      "with_skill": {"pass_rate": 1.0, "passed": 7, "total": 7, "tokens": 50196, "duration_seconds": 224.6},
+      "old_skill": {"pass_rate": 0.0, "passed": 0, "total": 7, "tokens": 37889, "duration_seconds": 156.3}
+    },
+    {
+      "eval_name": "java-core-sdk",
+      "with_skill": {"pass_rate": 1.0, "passed": 4, "total": 4, "tokens": 53781, "duration_seconds": 242.0},
+      "old_skill": {"pass_rate": 0.0, "passed": 0, "total": 4, "tokens": 33639, "duration_seconds": 155.6}
+    }
+  ],
+  "analysis": {
+    "summary": "The updated skill produces 100% pass rate on all examples/tests assertions vs 0% for the old skill. This is expected — the old skill had no instructions for creating test stubs or examples at all.",
+    "observations": [
+      "All 20 assertions are perfectly discriminating — they pass 100% with the new skill and 0% with the old, confirming the feature gap was real.",
+      "Token usage is ~20% higher with the updated skill (49K vs 41K mean), reflecting the additional work of reading reference examples/tests and generating more files.",
+      "Duration is ~35% longer (229s vs 170s mean) for the same reason — more files to plan and describe.",
+      "The Go with-skill run produced 117 files total (39 source, 63 tests, 8 examples) vs the old skill's ~20 files (14 source stubs + config).",
+      "Java run demonstrated correct language-specific conventions: PascalCase test names (ExecutorTest.java), JUnit 5 @Test + fail(), camelCase methods.",
+      "Rust MCP run correctly identified language-specific gaps: #[cfg(test)] convention not mentioned, mod.rs structure for nested test directories."
+    ],
+    "potential_improvements": [
+      "Test naming convention is hardcoded as test_{module} (Python style) in the template — should note language-specific variants (FooTest.java, foo_test.go, foo.test.ts)",
+      "Examples tree should signal it's not exhaustive (add ... or note about reference sync catching additional files)",
+      "Step 2 summary size target should be bumped from ~5-8KB to ~6-10KB to accommodate EXAMPLES and TESTS sections"
+    ]
+  }
+}

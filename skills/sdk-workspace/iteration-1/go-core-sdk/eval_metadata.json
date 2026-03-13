@@ -1,0 +1,16 @@
+{
+  "eval_id": 1,
+  "eval_name": "go-core-sdk",
+  "prompt": "/apcore-skills:sdk go --type core",
+  "assertions": [
+    "tests/ contains individual test files for each core module (executor, context, module, config, errors, acl, approval, async_task, bindings, decorator, cancel, trace_context)",
+    "tests/ includes a shared fixtures/helper file (conftest or helpers equivalent)",
+    "tests/ has subdirectories: integration/, registry/, schema/, observability/",
+    "Test stubs contain failing assertions using Go convention (t.Fatal or t.Error with 'not implemented')",
+    "examples/ directory is present in the scaffold output",
+    "examples/ contains a simple_client.go example",
+    "examples/ contains modules/ subdirectory with greet.go, get_user.go, send_email.go",
+    "Step 7 summary includes a 'Tests:' line with count",
+    "Step 7 summary includes an 'Examples:' line with count"
+  ]
+}

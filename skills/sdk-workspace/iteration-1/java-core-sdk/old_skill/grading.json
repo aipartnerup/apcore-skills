@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "java-core-sdk",
+  "configuration": "old_skill",
+  "expectations": [
+    {"text": "Test files use Java naming conventions", "passed": false, "evidence": "No test files created — tests/ contains only test runner config placeholder"},
+    {"text": "Example files use Java naming conventions", "passed": false, "evidence": "No examples/ directory created in old skill scaffold"},
+    {"text": "Test stubs reference JUnit 5 patterns", "passed": false, "evidence": "No test files exist to contain JUnit 5 patterns"},
+    {"text": "Examples are complete runnable code with main methods", "passed": false, "evidence": "No example files exist"}
+  ]
+}

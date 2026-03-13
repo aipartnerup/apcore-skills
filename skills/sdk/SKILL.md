@@ -2,18 +2,18 @@
 name: sdk
 description: >
   Bootstrap a new language SDK for the apcore ecosystem. Scaffolds the project
-  structure, extracts the full API contract from the protocol spec and reference
-  implementation, generates build configuration, and creates an implementation
-  plan via code-forge:plan for each feature module.
+  structure with source stubs, test stubs (TDD red phase), and runnable examples
+  ported from the reference implementation. Extracts the full API contract from
+  the protocol spec and configures code-forge for implementation planning.
 ---
 
 # Apcore Skills — SDK
 
-Bootstrap a new apcore core SDK or MCP bridge in a new language.
+Bootstrap a new apcore project in a new language. The project type is auto-discovered from the reference implementation — no hardcoded type list.
 
 ## Iron Law
 
-**EVERY NEW SDK MUST IMPLEMENT THE FULL PROTOCOL API CONTRACT. No partial SDKs — if you ship it, it must cover all exported symbols from the reference implementation.**
+**EVERY NEW PROJECT MUST IMPLEMENT THE FULL API CONTRACT. No partial implementations — if you ship it, it must cover all exported symbols from the reference implementation.**
 
 ## Anti-Rationalization Table
 
@@ -23,24 +23,32 @@ Bootstrap a new apcore core SDK or MCP bridge in a new language.
 | "Copy the Python structure exactly" | Use idiomatic target-language patterns. Same concepts, different structure. |
 | "Tests can come later" | TDD is mandatory. Test infrastructure is set up in scaffolding. |
 | "I'll figure out the naming as I go" | Naming is defined by conventions.md. Apply language rules from day one. |
+| "Examples can be added after the API works" | Examples are ported from the reference implementation during scaffolding. Users need runnable code from day one. |
 
 ## When to Use
 
-- Starting a new apcore SDK in Go, Rust, Java, C#, PHP, etc.
-- Starting a new apcore MCP bridge in a new language
-- Re-scaffolding an existing SDK that needs restructuring
+- Starting any new apcore project in a new language (any `--type` — auto-discovered from reference)
+- Re-scaffolding an existing project that needs restructuring
 
 ## Command Format
 
 ```
-/apcore-skills:sdk <language> [--type core|mcp] [--ref apcore-python]
+/apcore-skills:sdk <language> [--type <type>] [--ref <repo>]
 ```
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
 | `<language>` | Yes | — | Target language: `go`, `rust`, `java`, `csharp`, `kotlin`, `swift`, `php` |
-| `--type` | No | `core` | What to scaffold: `core` (SDK) or `mcp` (MCP bridge) |
+| `--type` | No | `core` | Project type (e.g., `core`, `mcp`, `a2a`, `toolkit`). Any string — new types are auto-supported via reference discovery. |
 | `--ref` | No | auto-detect | Reference implementation to extract API from |
+
+**Example:**
+```
+/apcore-skills:sdk go --type mcp
+→ Discovers apcore-mcp-python as reference
+→ Extracts API contract (server/, auth/, adapters/, converters/, cli, explorer)
+→ Scaffolds apcore-mcp-go/ with Go source stubs, test stubs, and ported examples
+```
 
 ## Context Management
 
@@ -52,11 +60,22 @@ Steps 2 and 4 use sub-agents. Step 2 analyzes the reference implementation. Step
 Step 0 (ecosystem) → 1 (parse args) → 2 (extract API contract) → 3 (tech stack) → 4 (scaffold) → 5 (feature specs) → 6 (plan generation) → 7 (summary)
 ```
 
+## Bundled References
+
+- `references/extract-api-contract.md` — Sub-agent prompt template for Step 2
+- `references/scaffold-project.md` — Sub-agent prompt template for Step 4
+
 ## Detailed Steps
 
 ### Step 0: Ecosystem Discovery
 
 @../shared/ecosystem.md
+
+**Data flow:** Step 0 produces the following variables used by subsequent steps:
+- `ecosystem_root` — absolute path to the parent directory containing all apcore repos
+- `protocol_path` — path to the `apcore` protocol spec repo (e.g., `{ecosystem_root}/apcore/`)
+- `repos[]` — list of discovered repos with metadata
+- `config` — merged configuration object
 
 ---
 
@@ -64,18 +83,20 @@ Step 0 (ecosystem) → 1 (parse args) → 2 (extract API contract) → 3 (tech s
 
 Parse `$ARGUMENTS`:
 
-1. Extract `<language>` — required, use `AskUserQuestion` if missing
+1. Extract `<language>` — required, ask the user if missing
 2. Extract `--type` — default `core`
 3. Extract `--ref` — resolve reference repo (priority order):
    - If `--ref` explicitly specified: use that
    - **If CWD is a same-type apcore repo** (e.g., in `apcore-python/` and `--type core`): use CWD repo as reference
-   - Otherwise auto-detect: for `core` prefer `apcore-python`, for `mcp` prefer `apcore-mcp-python`
+   - Otherwise auto-detect: look for `apcore-{type}-python` in ecosystem root (for `core` type, look for `apcore-python`)
 
-Derive target repo name:
-- Core SDK: `apcore-{lang}` (e.g., `apcore-go`, `apcore-java`)
-- MCP bridge: `apcore-mcp-{lang}` (e.g., `apcore-mcp-go`)
+Derive target repo name using the naming pattern:
+- `core` type → `apcore-{lang}` (special case: no type infix)
+- All other types → `apcore-{type}-{lang}` (e.g., `apcore-mcp-go`, `apcore-a2a-rust`, `apcore-toolkit-java`)
 
-Derive target path: `{ecosystem_root}/apcore-{type}-{lang}/` (or `{ecosystem_root}/{framework}-apcore/`)
+Derive target path: `{ecosystem_root}/{target-repo-name}/`
+
+**Data flow:** Step 1 adds: `lang`, `type`, `ref_path`, `target-repo-name`, `target-path`
 
 Check if target directory already exists:
 - If exists with source files: warn and ask — "Update scaffolding" / "Use as-is" / "Cancel"
@@ -85,7 +106,7 @@ Display:
 ```
 SDK Bootstrap:
   Language:   {lang}
-  Type:       {core|mcp}
+  Type:       {type}
   Reference:  {ref-repo} ({ref-lang})
   Target:     {target-path}
 ```
@@ -94,92 +115,21 @@ SDK Bootstrap:
 
 ### Step 2: Extract API Contract (Sub-agent)
 
-Spawn `Task(subagent_type="general-purpose")`:
+Spawn `Agent(subagent_type="general-purpose")` with the prompt from `references/extract-api-contract.md`, filling in: `{lang}`, `{ref_path}`, `{type}`, `{protocol_path}`.
 
-**Sub-agent prompt:**
-```
-Extract the complete public API contract from the apcore reference implementation for porting to {lang}.
-
-Reference repo: {ref_path}
-Reference type: {core|mcp}
-
-Read the following files and extract the full API surface:
-
-For core SDK:
-1. src/{package}/__init__.py (or src/index.ts) — all public exports
-2. For each exported class: read source file, extract constructor + all public methods with full signatures
-3. src/{package}/errors.py (or errors.ts) — all error classes and codes
-4. src/{package}/middleware/ — middleware interfaces
-5. src/{package}/registry/ — registry interfaces
-6. src/{package}/schema/ — schema interfaces
-7. src/{package}/observability/ — observability interfaces
-
-For MCP bridge:
-1. src/{package}/__init__.py (or src/index.ts) — all public exports
-2. src/{package}/server/ — server factory, transport interfaces
-3. src/{package}/auth/ — authentication interfaces
-4. src/{package}/adapters/ — adapter interfaces
-5. src/{package}/converters/ — converter interfaces
-
-Also read:
-- {protocol_path}/PROTOCOL_SPEC.md — for authoritative definitions
-- {protocol_path}/docs/spec/type-mapping.md — if exists, for type translations
-
-Return a structured API contract in this format:
-
-API_CONTRACT:
-  type: {core|mcp}
-  source: {ref-repo}
-  source_version: {version}
-  export_count: {N}
-  module_count: {N} (number of source files/modules)
-
-MODULES:
-- module: {module-name} (e.g., "executor", "registry", "schema")
-  file: {source-file}
-  classes:
-    - {ClassName}:
-        constructor: ({params with types and defaults})
-        methods:
-          - {name}({params}) -> {return} [async] [static]
-  functions:
-    - {name}({params}) -> {return} [async]
-  types:
-    - {TypeName}: {definition}
-  constants:
-    - {NAME}: {type} = {value}
-
-ERROR_HIERARCHY:
-  base: {BaseErrorName}
-  codes: {ErrorCodeEnum with all values}
-  classes:
-    - {ErrorName}(code={CODE}, parent={Parent})
-
-EXTENSION_POINTS:
-  - {interface-name}: {method signatures}
-
-Error handling:
-- If the reference repo path does not exist, return: STATUS: NOT_FOUND, REASON: "Reference repo not found at {path}"
-- If __init__.py/index.ts is missing or empty, return: STATUS: NO_EXPORTS, REASON: "No public exports found"
-- If PROTOCOL_SPEC.md is missing, proceed with reference implementation only and note: "Protocol spec not found, using reference impl as sole authority"
-- If individual source files cannot be read, skip them and note in the summary
-
-Target ~5-8KB summary.
-```
-
-Store as `api_contract`. If the sub-agent returns STATUS: NOT_FOUND or NO_EXPORTS, display error and use `AskUserQuestion` to either provide a different reference or abort.
+Store result as `api_contract`. If the sub-agent returns STATUS: NOT_FOUND or NO_EXPORTS, display error and ask the user to either provide a different reference or abort.
 
 ---
 
 ### Step 3: Confirm Tech Stack
 
-Use `AskUserQuestion` to confirm the target language tech stack.
+Ask the user to confirm the target language tech stack.
 
 @../shared/conventions.md (refer to "Testing Conventions" and "Dependency Conventions" sections)
 
 **For Go:**
 - Go version: "1.21+ (Recommended)" / "1.22+"
-- Module path: default `github.com/aipartnerup/apcore-go`
+- Module path: default `github.com/aipartnerup/{target-repo-name}`
 - Test extras: "Standard testing (Recommended)" / "testify"
 - Schema validation: "go-jsonschema (Recommended)" / "gojsonschema" / "Other"
 
@@ -203,106 +153,15 @@ Store `tech_stack` decisions.
 
 ### Step 4: Scaffold Project (Sub-agent)
 
-Spawn `Task(subagent_type="general-purpose")`:
-
-**Sub-agent prompt:**
-```
-Create the project skeleton for {target-repo-name} at {target-path}.
-
-Language: {lang}
-Type: {core|mcp}
-Tech stack: {tech_stack decisions}
-Package name: {derived package name per conventions}
-
-## Project Structure
-
-Follow the apcore project structure convention:
-
-{For core SDK:}
-{target-path}/
-├── {build-config}                    # pyproject.toml / package.json / go.mod / Cargo.toml
-├── .gitignore                        # language-appropriate patterns
-├── README.md                         # project name, description, installation, link to docs
-├── CHANGELOG.md                      # empty "## [Unreleased]" section
-├── LICENSE                           # Detect from existing ecosystem repos or ask user (MIT / Apache-2.0)
-├── src/                              # or language-appropriate source dir
-│   ├── {main-module-file}            # exports (empty stubs with TODO)
-│   ├── executor.{ext}               # stub
-│   ├── context.{ext}                # stub
-│   ├── module.{ext}                 # stub
-│   ├── config.{ext}                 # stub
-│   ├── errors.{ext}                 # stub with ErrorCode enum and base error
-│   ├── acl.{ext}                    # stub
-│   ├── approval.{ext}              # stub
-│   ├── async_task.{ext}            # stub
-│   ├── bindings.{ext}              # stub
-│   ├── decorator.{ext}             # stub
-│   ├── extensions.{ext}            # stub
-│   ├── cancel.{ext}               # stub — cancellation support
-│   ├── trace_context.{ext}        # stub — trace context propagation
-│   ├── middleware/                   # stub directory
-│   ├── registry/                    # stub directory
-│   ├── schema/                      # stub directory
-│   ├── observability/               # stub directory
-│   └── utils/                       # stub directory
-└── tests/
-    └── {test-config}                # pytest.ini / vitest.config / test runner config
-
-{For MCP bridge:}
-{target-path}/
-├── {build-config}
-├── .gitignore
-├── README.md
-├── CHANGELOG.md
-├── LICENSE                              # Detect from existing ecosystem repos or ask user (MIT / Apache-2.0)
-├── src/
-│   ├── {main-module-file}
-│   ├── server/                      # factory, transport stubs
-│   ├── auth/                        # JWT stub
-│   ├── adapters/                    # adapter stubs
-│   ├── converters/                  # converter stubs
-│   ├── cli.{ext}                   # CLI entry point stub
-│   └── explorer/                    # optional: web UI stubs
-└── tests/
-    └── {test-config}
-
-## Stub File Content
-
-Each stub file should contain:
-1. Module/file header comment referencing the protocol spec section
-2. Import of base types from the main module
-3. Class/function stubs with correct signatures from the API contract
-4. TODO comments indicating what needs to be implemented
-5. Type annotations matching the language convention
-
-## API Contract Reference
-{api_contract from Step 2}
-
-## Naming
-Apply {lang} naming conventions:
-- Python: snake_case for functions/methods, PascalCase for classes
-- TypeScript: camelCase for functions/methods, PascalCase for classes
-- Go: PascalCase for public, camelCase for private
-- Rust: snake_case for functions/methods, PascalCase for types
-- Java: camelCase for methods, PascalCase for classes
-- C#: PascalCase for methods and classes, camelCase for parameters/locals
-- Kotlin: camelCase for functions/methods, PascalCase for classes
-- Swift: camelCase for functions/methods, PascalCase for types/protocols
-- PHP: camelCase for methods, PascalCase for classes, $camelCase for variables
-
-Error handling:
-- If {target-path} is not writable, return: STATUS: WRITE_ERROR, REASON: "{description}"
-- If a file cannot be created, skip it and include in the return as "{file} (SKIPPED: {reason})"
-- If the language is not recognized, return: STATUS: UNSUPPORTED_LANG, REASON: "No scaffold template for {lang}"
-
-Create ALL files listed above. Return the list of files created.
-```
+Spawn `Agent(subagent_type="general-purpose")` with the prompt from `references/scaffold-project.md`, filling in: `{target-repo-name}`, `{target-path}`, `{lang}`, `{type}`, `{tech_stack}`, `{package_name}`, `{api_contract}`, `{ref_path}`, `{conventions_path}` (= resolved path to `../shared/conventions.md`).
 
 After sub-agent completes, verify:
 - Build config file exists
 - Main module file exists with exports
-- At least 5 source files exist
-- Tests directory exists
+- At least 3 source files exist
+- Tests directory exists with test stubs
+- Test helper/fixture file exists
+- Examples directory exists (only if reference had examples/)
 - README.md exists
 
 ---
@@ -329,18 +188,10 @@ If they don't exist:
 Write `{target-path}/.code-forge.json`:
 ```json
 {
-  "_tool": {
-    "name": "code-forge",
-    "description": "Transform documentation into actionable development plans",
-    "url": "https://github.com/tercel/code-forge"
-  },
   "directories": {
     "base": "./",
     "input": "{relative-path-to-feature-specs}",
     "output": "planning/"
-  },
-  "reference_docs": {
-    "sources": ["{relative-path-to-ref}/planning/*/plan.md"]
   },
   "port": {
     "source_docs": "{relative-path-to-protocol}",
@@ -354,6 +205,8 @@ Write `{target-path}/.code-forge.json`:
   }
 }
 ```
+
+Optionally add `reference_docs.sources` if the reference repo has `planning/` output. After writing, resolve each relative path (`input`, `reference_impl`, `source_docs`) and warn if any don't exist yet. Missing paths are acceptable (they may be created later) but should be noted.
 
 **Git initialization is left to the user.** Display:
 ```
@@ -373,8 +226,10 @@ apcore-skills:sdk — SDK Bootstrap Complete
 
 Target: {target-path}
 Language: {lang}
-Type: {core|mcp}
+Type: {type}
 Modules: {N} source files scaffolded
+Tests: {N} test stubs (TDD red phase)
+Examples: {N} runnable examples
 Feature specs: {N} specs available
 API contract: {N} public symbols to implement
 

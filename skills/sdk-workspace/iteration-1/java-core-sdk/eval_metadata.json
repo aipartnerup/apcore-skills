@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "java-core-sdk",
+  "prompt": "/apcore-skills:sdk java",
+  "assertions": [
+    "Test files use Java naming conventions (PascalCase class names, camelCase method names)",
+    "Example files use Java naming conventions (e.g., SimpleClient.java, not simple_client.java)",
+    "Test stubs reference JUnit 5 patterns (@Test annotations, Assertions.fail for red phase)",
+    "Examples are complete runnable code with main methods, not stubs with TODO comments"
+  ]
+}

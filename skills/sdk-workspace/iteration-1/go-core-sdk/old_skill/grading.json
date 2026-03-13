@@ -1,0 +1,16 @@
+{
+  "eval_id": 1,
+  "eval_name": "go-core-sdk",
+  "configuration": "old_skill",
+  "expectations": [
+    {"text": "tests/ contains individual test files for each core module", "passed": false, "evidence": "tests/ directory contains only a test runner config placeholder — no individual test files created"},
+    {"text": "tests/ includes a shared fixtures/helper file", "passed": false, "evidence": "No helper file created. tests/ is effectively empty for Go (no config needed)"},
+    {"text": "tests/ has subdirectories: integration/, registry/, schema/, observability/", "passed": false, "evidence": "No test subdirectories created. Only 'tests/{test-config}' in template"},
+    {"text": "Test stubs contain failing assertions using Go convention", "passed": false, "evidence": "No test files exist to contain assertions"},
+    {"text": "examples/ directory is present", "passed": false, "evidence": "No examples/ directory in the scaffold template. Simulation confirms 'examples/ is completely missing'"},
+    {"text": "examples/ contains a simple_client.go example", "passed": false, "evidence": "No examples/ directory exists"},
+    {"text": "examples/ contains modules/ with greet, get_user, send_email", "passed": false, "evidence": "No examples/ directory exists"},
+    {"text": "Step 7 summary includes a Tests count", "passed": false, "evidence": "Summary shows only 'Modules: 14 source files scaffolded' — no Tests line"},
+    {"text": "Step 7 summary includes an Examples count", "passed": false, "evidence": "Summary shows no Examples line"}
+  ]
+}

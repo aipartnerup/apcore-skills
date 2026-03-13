@@ -1,0 +1,11 @@
+{
+  "eval_id": 3,
+  "eval_name": "java-core-sdk",
+  "configuration": "with_skill",
+  "expectations": [
+    {"text": "Test files use Java naming conventions", "passed": true, "evidence": "All test files use PascalCase + Test suffix: ExecutorTest.java, ContextTest.java, AclTest.java, RegistryTest.java. Methods use camelCase: shouldExecuteModuleWithValidInputs()"},
+    {"text": "Example files use Java naming conventions", "passed": true, "evidence": "SimpleClient.java, GlobalClient.java, GreetModule.java, GetUserModule.java, SendEmailModule.java — all PascalCase"},
+    {"text": "Test stubs reference JUnit 5 patterns", "passed": true, "evidence": "Tests use @Test annotation, import org.junit.jupiter.api.Test, Assertions.fail(\"Not implemented\") for TDD red phase"},
+    {"text": "Examples are complete runnable code with main methods", "passed": true, "evidence": "SimpleClient.java shows complete code: APCore client = new APCore(), client.register(), client.call(), Map result, System.out.println"}
+  ]
+}
