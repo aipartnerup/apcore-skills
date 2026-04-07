@@ -3,15 +3,21 @@ name: sync
 description: >
   Unified cross-language consistency verification and documentation alignment.
   Phase A: verifies feature specs and protocol spec match all language implementations
-  (classes, functions, parameters, return types) via itemized checklist comparison.
+  (classes, functions, parameters, return types, trait/interface satisfaction,
+  multi-constructor patterns, and optional algorithm-skeleton checkpoints) via
+  itemized checklist comparison.
   Phase B: verifies all documentation (PRD, SRS, Tech Design, Test Plan, Feature Specs,
   PROTOCOL_SPEC, README, examples, tests) is internally consistent and free of contradictions.
   Includes cross-language example scenario coverage and test scenario coverage comparison.
+  Optionally hands off behavioral equivalence to the `tester` skill.
   Covers both apcore core SDKs and apcore-mcp bridges.
 instructions: >
   The documentation repos (apcore/, apcore-mcp/) are the single source of truth.
   Phase A MUST complete before Phase B begins — Phase B uses Phase A's verified
   API surface as its reference. Never skip a phase. Never skip a checklist item.
+  Internal consistency is checked at the SKELETON level (algorithm checkpoint
+  sequence) and the BEHAVIOR level (delegated to tester). Function-level identity
+  is explicitly NOT a goal — it conflicts with each language's design philosophy.
   CHANGELOG is a release artifact, NOT a documentation consistency concern.
 ---
 
@@ -36,6 +42,9 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | "Checking a few symbols is representative" | Build the complete checklist. Compare every item. Partial checks create false confidence. |
 | "CHANGELOG has the wrong API name" | CHANGELOG is a release artifact, not documentation. Leave it to the release skill. |
 | "PRD is product-level, no need to check against code" | If the PRD says a feature exists but no implementation matches, that is a gap. Every layer must agree. |
+| "Internal helpers should also be 1-to-1 across languages" | NO. Function-level identity conflicts with each language's design (Rust ownership splits, Go's no-default-args, Python list comprehensions). Internal consistency CAN be enforced at the SKELETON level (algorithm checkpoint sequence — opt in via `--internal-check=skeleton`) and the BEHAVIOR level (delegated to `tester` — opt in via `--internal-check=behavior`). Both are off by default; helper-name parity is never enforced at any tier. |
+| "Trait satisfaction is a Rust thing, skip it for other languages" | Every language has an equivalent: Python `__str__` / TS `toString()` / Go `String()` / Rust `impl Display`. The protocol spec defines required interface contracts; each language must satisfy them with its idiomatic mechanism. Build a dedicated checklist row. |
+| "Multiple constructors are language-specific sugar" | Rust's `Self::new()` / `Self::with_config()` / `Self::from_env()` corresponds to Python `classmethod` factories, TS static factories, Go `NewX` / `NewXFromY`. If the spec defines multiple construction paths, every language must expose all of them. Treat constructors as a list, not a single entry. |
 
 ## When to Use
 
@@ -49,7 +58,7 @@ Unified consistency verification across all apcore ecosystem documentation and i
 ## Command Format
 
 ```
-/apcore-skills:sync [repo1,repo2,...] [--phase a|b|all] [--fix] [--scope core|mcp|all] [--lang python,typescript,...] [--save]
+/apcore-skills:sync [repo1,repo2,...] [--phase a|b|all] [--fix] [--scope core|mcp|all] [--lang python,typescript,...] [--internal-check none|skeleton|behavior] [--save]
 ```
 
 | Argument / Flag | Default | Description |
@@ -59,7 +68,18 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | `--fix` | off | Auto-fix issues (naming, stubs, doc references) |
 | `--scope` | **cwd** | Which group: `core`, `mcp`, `all`. **If omitted and no positional repos, defaults to the current working directory's repo only.** Use `--scope all` to scan all repos. |
 | `--lang` | all discovered | Comma-separated list of languages to compare |
+| `--internal-check` | `none` | Internal consistency tier. `none` = public API only (default — safe for repos without checkpoint instrumentation). `skeleton` = also compare algorithm checkpoint sequences (Step 4A, static). `behavior` = additionally hand off to `tester` skill for runtime behavioral equivalence (Step 7.5). Function-level identity is intentionally NOT supported — see Anti-Rationalization Table. |
 | `--save` | off | Save report to file |
+
+### Internal Consistency Tiers
+
+| Tier | What is checked | How | Cost |
+|------|----------------|-----|------|
+| `none` (default) | Public API surface only (Step 4) | Static signature comparison | Low |
+| `skeleton` | Algorithm checkpoint sequence inside each public method | Static — grep `checkpoint:NAME` literal strings in source, compare ordered set against spec's `## Algorithm` section | Low |
+| `behavior` | Runtime behavioral equivalence — same input → same observable output across all SDKs | Dynamic — invokes `/apcore-skills:tester --mode run --category protocol` (Step 7.5) and merges results | High (runs tests) |
+
+**Function-level identity (helper names / count / decomposition) is explicitly NOT a tier.** It conflicts with each language's design philosophy (Rust ownership splits, Go's no-default-args, Python list comprehensions) and produces noise rather than signal.
 
 ### Positional Repo Arguments
 
@@ -226,6 +246,9 @@ Follow the API Extraction Protocol:
    - Error classes: name, error code, parent class
    - Middleware interfaces: method signatures
    - Extension points: discoverer, validator, exporter interfaces
+   - **Trait/interface implementations**: for each public class, the list of trait/interface contracts it satisfies (e.g., Rust `impl Display for Registry`, Python `class Registry(Hashable)`, Go `func (r *Registry) String() string`, TS `class Registry implements Serializable`). Use the equivalence table in Step 4.2 item 4 to recognize idiomatic forms.
+   - **Multi-constructor patterns**: for each public class, the list of all construction paths (Rust `impl Self { fn new; fn with_…; fn from_… }`; Python `__init__` + every `@classmethod` factory; Go every `NewX*` function in the same package; TS constructor + static factories). Return as `constructors: [{name, params, return_type}, ...]`.
+   - **Algorithm checkpoint markers**: for each public method body, grep for `checkpoint:[a-z_][a-z0-9_]*` literal strings (in `logger.debug` / `tracing::debug!` / `slog.Debug` / `span.AddEvent` / `tracer.startSpan` calls). Return them in source order as a `skeleton` field on each method object: `methods: [{name: "...", skeleton: [checkpoint_1, checkpoint_2, ...]}]`. Top-level functions get a sibling `skeleton` field. Do NOT invent — only report literally found markers. If none found for a method, return an empty list (`skeleton: []`).
 
 Return a structured summary in this exact format:
 
@@ -236,13 +259,19 @@ EXPORT_COUNT: {N}
 
 CLASSES:
 - {ClassName}
-  constructor({param1}: {type1}, {param2}: {type2} = {default})
+  constructors:
+    - {ctor_name}({param1}: {type1}, {param2}: {type2} = {default})
+    - {factory_name}({params}) -> Self
   methods:
     - {method_name}({params}) -> {return_type} [async]
+      skeleton: [checkpoint_1, checkpoint_2, ...]
     - ...
+  trait_impls:
+    - {ContractName}  (e.g., Display, Clone, Serialize, Iterator)
 
 FUNCTIONS:
 - {function_name}({params}) -> {return_type} [async]
+  skeleton: [checkpoint_1, checkpoint_2, ...]
 
 ENUMS:
 - {EnumName}: {MEMBER1}={value1}, {MEMBER2}={value2}, ...
@@ -274,14 +303,33 @@ For each documentation repo in scope, read the authoritative specs:
 
 **For `apcore/` (core scope):**
 1. Read `{doc_repo_path}/PROTOCOL_SPEC.md` — extract the API contract sections
-2. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions (classes, functions, parameters, return types)
-3. If `{doc_repo_path}/docs/spec/type-mapping.md` exists — load cross-language type mappings
+2. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions (classes, functions, parameters, return types, **trait/interface contracts**, **multi-constructor patterns**)
+3. If `{doc_repo_path}/docs/tech-design.md` (or `docs/tech-design/*.md`) exists — extract any internal interface contracts marked as normative. Tag them with `internal_contract: true` so Step 4A knows they apply to internal symbols, not just public API.
+4. From each feature spec, parse any `## Algorithm` section — extract the ordered checkpoint list for each public method. Store as `spec_skeletons[scope][symbol] = [checkpoint_1, checkpoint_2, ...]`. This is the input for Step 4A.
+5. If `{doc_repo_path}/docs/spec/type-mapping.md` exists — load cross-language type mappings
 
 **For `apcore-mcp/` (mcp scope):**
-1. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions
-2. If a protocol or spec file exists — extract the API contract
+1. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions and `## Algorithm` checkpoint sections
+2. If `{doc_repo_path}/docs/tech-design.md` exists — extract internal interface contracts
+3. If a protocol or spec file exists — extract the API contract
 
-Store as `spec_api[scope]` — the canonical API that all implementations in this scope must match.
+Store as `spec_api[scope]` (canonical API surface) and `spec_skeletons[scope][symbol]` (algorithm checkpoint sequences keyed first by scope, then by symbol). Both must be matched by implementations.
+
+**Algorithm section format (convention).** Feature specs SHOULD declare algorithm skeletons in this form so that Step 4A can parse them:
+
+```markdown
+## Algorithm: Registry.register
+
+1. validate_id_format
+2. check_duplicate
+3. resolve_dependencies
+4. acquire_write_lock
+5. insert_into_index
+6. emit_registered_event
+7. release_write_lock
+```
+
+If a feature spec has no `## Algorithm` section for a given method, Step 4A skips skeleton checking for that method (with INFO finding "no spec skeleton declared").
 
 ---
 
@@ -343,13 +391,29 @@ For each symbol, create a checklist row covering every checkable property.
 
 Checklist items per CLASS:
 1. Class exists — present in spec? present in each implementation?
-2. Constructor params — for each param: name convention ✓? type matches ✓? required/optional ✓? default value ✓?
+2. **Constructors (list, not single entry)** — the spec may declare multiple construction paths (Rust `Self::new` / `Self::with_config` / `Self::from_env`; Python `classmethod` factories; Go `NewX` / `NewXFromY`; TS static factories). For each spec-declared constructor:
+   a. Constructor exists in each implementation under the language-idiomatic mechanism?
+   b. Each param: name convention ✓, type ✓, required/optional ✓, default value ✓ (use the default-value mapping table in api-extraction.md E.4)
 3. Methods — for each method:
    a. Method exists in each implementation?
    b. Name follows language convention for the canonical name?
    c. Each parameter: name ✓, type ✓, required/optional ✓, default ✓
    d. Return type matches (using type mapping table)?
    e. Async flag matches?
+4. **Trait / Interface satisfaction** — for each trait/interface contract the spec declares this class must satisfy (e.g., `Display`, `Serializable`, `Clone`, `Iterator`):
+   a. Each implementation must expose the equivalent contract using the language's idiomatic mechanism. Equivalence table:
+      | Spec contract | Python | TypeScript | Go | Rust | Java |
+      |---|---|---|---|---|---|
+      | `Display` (string repr) | `__str__` | `toString()` | `String() string` | `impl Display` | `toString()` |
+      | `Debug` (debug repr) | `__repr__` | `[util.inspect.custom]` | `GoString() string` | `impl Debug` | `toString()` (debug variant) |
+      | `Equality` | `__eq__` + `__hash__` | `equals()` + `hashCode()` (or value-equality lib) | `Equal(other) bool` | `impl PartialEq + Eq + Hash` | `equals()` + `hashCode()` |
+      | `Clone` | `__copy__` / `copy.copy` | `clone()` method | explicit copy func | `impl Clone` | `clone()` (Cloneable) |
+      | `Default construction` | classmethod `default()` | static `default()` | `NewX()` zero-value | `impl Default` | no-arg constructor |
+      | `Serialize` | `to_dict` / pydantic | `toJSON` / class-transformer | `MarshalJSON` | `impl Serialize` | Jackson annotations |
+      | `Iterator` | `__iter__` + `__next__` | `[Symbol.iterator]` | `Next() (T, bool)` channel | `impl Iterator` | `Iterator<T>` |
+      | `Context manager` | `__enter__` + `__exit__` | `Symbol.dispose` / `using` | `defer` + Close() | `impl Drop` | try-with-resources (`AutoCloseable`) |
+   b. If the spec contract has no row in this table, fall back to: "implementation exposes a method whose canonical-snake-case name matches the contract's spec name"
+   c. Missing equivalent → FAIL with severity `critical`
 
 **For each FUNCTION:**
 1. Function exists — present in spec? present in each implementation?
@@ -381,6 +445,55 @@ For each implementation repo, compare against the spec API:
 1. **Missing from spec** — implementation has symbols not defined in spec (language-specific additions)
 2. **Missing from implementation** — spec defines symbols not in implementation
 3. **Divergence** — implementation doesn't match spec definition
+
+#### 4A: Internal Skeleton Consistency (when --internal-check >= skeleton)
+
+**Purpose:** verify that each public method's *internal algorithm* follows the same checkpoint sequence across languages, without requiring helper-function identity. This is the only static check sync performs on internal implementation.
+
+**Skip conditions:**
+- `--internal-check=none` → skip this entire substep
+- `spec_skeletons[scope]` is empty (no feature spec in this scope declares any `## Algorithm` section) → skip the entire substep with a single INFO finding `"no spec skeletons defined for scope {scope} — skeleton tier is a no-op until feature specs add ## Algorithm sections"`. Do NOT emit per-method findings in this case.
+- A given method has no `## Algorithm` section in its feature spec (but other methods in the same scope do) → skip just this method with INFO finding `"no spec skeleton declared for {method}"`
+
+**Checkpoint extraction.** Each implementation must mark its algorithm steps with structured trace/log calls so they can be statically grepped. Convention:
+
+| Language | Marker form | Example |
+|---|---|---|
+| Python | `logger.debug("checkpoint:NAME")` or `tracer.start_as_current_span("checkpoint:NAME")` (OpenTelemetry) | `logger.debug("checkpoint:validate_id_format")` |
+| TypeScript | `logger.debug("checkpoint:NAME")` or `tracer.startSpan("checkpoint:NAME")` (OpenTelemetry) | `logger.debug("checkpoint:validate_id_format")` |
+| Go | `slog.Debug("checkpoint:NAME")` or `span.AddEvent("checkpoint:NAME")` | `slog.Debug("checkpoint:validate_id_format")` |
+| Rust | `tracing::debug!("checkpoint:NAME")` or `tracing::trace_span!("checkpoint:NAME")` | `tracing::debug!("checkpoint:validate_id_format")` |
+| Java | `logger.debug("checkpoint:NAME")` or `Span.current().addEvent("checkpoint:NAME")` | `logger.debug("checkpoint:validate_id_format")` |
+
+> **Note:** The example call sites above are *illustrative*. The normative extraction rule is the regex in `shared/api-extraction.md` E.4a, which matches any string literal of the form `"checkpoint:NAME"` regardless of which logger/tracer API wraps it. Any new logging or tracing library that accepts string arguments will automatically work without updating this table.
+
+The literal prefix is `checkpoint:` followed by a snake_case identifier. Sub-agents in Step 2 grep for `checkpoint:[a-z_][a-z0-9_]*` inside each public method's source body and return them in their natural source order as a `skeleton` field on each method object. Main context flattens to `repo_skeletons[repo_name][symbol] = method.skeleton` after all sub-agents return.
+
+**Skeleton comparison rules.** For each `(symbol, repo)` pair where both `spec_skeletons[scope][symbol]` and `repo_skeletons[repo][symbol]` exist and are non-empty:
+
+1. **Set equality** — every checkpoint in spec must appear in implementation, and vice versa. Missing → FAIL `critical` "Repo {R} method {M} missing checkpoint `{C}` declared in spec". Extra → WARN "Repo {R} method {M} has undeclared checkpoint `{C}` (consider adding to spec)".
+2. **Order equality** — the relative order of common checkpoints must match the spec. Order divergence → FAIL `critical` "Repo {R} method {M} executes `{A}` before `{B}` but spec orders them `{B}` before `{A}`". Use longest-common-subsequence diff to report minimum changes.
+3. **Cross-repo consistency** — independent of spec, all repos must agree with each other on order. If two repos disagree even when both match the spec (e.g., spec has `[A,B]` but one repo has `[A,X,B]` and another has `[A,Y,B]`), this is allowed (X and Y are language-specific extras), but flag as INFO.
+
+**Output format:**
+```
+┌────────────────────────────────┬──────┬────────┬──────┬──────┬────────┐
+│ Registry.register skeleton     │ Spec │ Python │  TS  │  Go  │  Rust  │
+├────────────────────────────────┼──────┼────────┼──────┼──────┼────────┤
+│ validate_id_format             │  #1  │ #1 ✓   │ #1 ✓ │ #1 ✓ │ #1 ✓   │
+│ check_duplicate                │  #2  │ #2 ✓   │ #2 ✓ │ MISS │ #2 ✓   │
+│ resolve_dependencies           │  #3  │ #3 ✓   │ #3 ✓ │ #2 ✓ │ #3 ✓   │
+│ acquire_write_lock             │  #4  │ #4 ✓   │ #4 ✓ │ #3 ✓ │ #4 ✓   │
+│ insert_into_index              │  #5  │ #5 ✓   │ #5 ✓ │ #4 ✓ │ #5 ✓   │
+│ emit_registered_event          │  #6  │ #6 ✓   │ #7 ⚠ │ #5 ✓ │ #6 ✓   │
+│   ↑ TS reordered after release_write_lock                              │
+│ release_write_lock             │  #7  │ #7 ✓   │ #6 ⚠ │ #6 ✓ │ #7 ✓   │
+└────────────────────────────────┴──────┴────────┴──────┴──────┴────────┘
+```
+
+**Anti-pattern guard.** Sub-agents MUST NOT invent checkpoints — only report what is literally in the source. If a method has zero checkpoint markers, report `repo_skeletons[repo][symbol] = []` and let comparison logic decide (it produces `WARN: implementation has no checkpoint instrumentation but spec declares {N} checkpoints`).
+
+**Store as `phase_a_skeleton_results`** for inclusion in Step 5 and Step 9 reports.
 
 #### 4.4 Store Phase A Results
 
@@ -432,6 +545,15 @@ Cross-implementation:
   Signature mismatch: {N}
   Naming inconsistency: {N}
   Type mismatch: {N}
+  Trait/interface satisfaction gaps: {N}
+  Multi-constructor coverage gaps: {N}
+
+Internal skeleton (--internal-check >= skeleton):
+  Methods with spec skeleton: {N}
+  Methods passing checkpoint set+order: {N}
+  Methods missing checkpoints: {N}
+  Methods with reordered checkpoints: {N}
+  Methods with no instrumentation: {N}
 
 FAIL items (expanded):
   ❌ Registry.scan_directory()
@@ -684,6 +806,44 @@ After collecting all per-repo findings, the main context performs cross-repo che
 
 ---
 
+---
+
+### Step 7.5: Behavioral Equivalence Hand-off (only when --internal-check=behavior)
+
+**Skip if `--internal-check` is `none` or `skeleton`.** This step runs ONLY when the operator opts into the behavior tier.
+
+Sync alone cannot verify that two implementations produce the same outputs for the same inputs — that is the `tester` skill's job. When this tier is enabled, the main context invokes `tester` as a sub-step and merges its findings into Phase B.
+
+**Invocation contract.**
+
+1. **Pre-filter implementation repos by `--lang`.** `tester` does NOT accept a `--lang` flag — it takes positional repo names. Resolve `impl_repos` to the language-filtered subset before invocation.
+2. **Build the command** (positional repos are space-separated, matching `tester` SKILL.md Command Format):
+   ```
+   /apcore-skills:tester {repo1} {repo2} {repo3} --mode run --category protocol --save tester-{date}.md
+   ```
+3. **Concrete example.** For `/apcore-skills:sync --lang python,rust --internal-check=behavior` with discovered repos `apcore-python`, `apcore-typescript`, `apcore-rust`:
+   ```
+   /apcore-skills:tester apcore-python apcore-rust --mode run --category protocol --save tester-2026-04-07.md
+   ```
+   (`apcore-typescript` is excluded by the language pre-filter.)
+
+**Result merging.**
+
+1. Capture the tester report and parse its `Cross-Language Equivalence` section
+2. Merge any FAIL findings into Phase B findings under scope `behavior` with severity mapping:
+   - tester `divergence` → sync `critical`
+   - tester `flaky` → sync `warning`
+   - tester `skipped` → sync `info`
+3. Each merged finding's `location` is the implementation file under test; `fix` is "see tester report {tester-{date}.md} for failing input/output diff"
+4. **Failure modes:**
+   - If `tester` skill is not installed → emit a single WARN finding `"behavior tier requested but tester skill not available"` and continue
+   - If `tester` invocation runs but exits with errors → emit a single CRITICAL finding `"tester invocation failed: {error}"` and include the tester output in the report
+   - If pre-filter leaves zero repos (all filtered out) → skip the entire step with INFO `"behavior tier skipped: --lang filter excluded all repos"`
+
+Store merged findings in `phase_b_behavior_findings` for inclusion in Step 8 and Step 9 reports.
+
+---
+
 ### Step 8: Phase B Report
 
 ```
@@ -733,6 +893,15 @@ After collecting all per-repo findings, the main context performs cross-repo che
     executor          |    8   |      8     |   8   ✓
     config            |    5   |      3     |   5   ⚠ missing: env_override, nested_merge
 
+--- Behavioral Equivalence (--internal-check=behavior) ---
+
+  Tester report: tester-{date}.md
+  Protocol-category tests: {N} run
+  Cross-language pass: {N}/{N}
+  Divergences: {N}
+    ❌ Executor.execute({"x": 1}) → Python returns {"y": 2}, TypeScript returns {"y": "2"}
+    ❌ Registry.scan(empty) → Python returns [], Rust returns Err(NoModules)
+
 --- Cross-Repo ---
 
   Cross-repo contradictions: {N}
@@ -763,6 +932,11 @@ Spec compliance:
 
 Cross-implementation:
   Total: {N} | Match: {N} | Missing: {N} | Mismatch: {N} | Naming: {N} | Type: {N}
+  Trait/interface gaps: {N} | Multi-constructor gaps: {N}
+
+Internal skeleton (--internal-check >= skeleton):
+  Methods checked: {N} | Pass: {N} | Missing checkpoint: {N} | Reordered: {N} | No instrumentation: {N}
+  (omitted entirely if --internal-check=none or no spec skeletons defined)
 
 ═══ PHASE B: Documentation Consistency ═══
 
@@ -776,6 +950,11 @@ Implementation repo docs:
 Cross-repo examples: {N} missing scenarios
 Cross-repo tests: {N} missing scenarios, {N} missing feature areas
 Cross-repo contradictions: {N}
+
+Behavioral equivalence (--internal-check=behavior):
+  Tester report: tester-{date}.md
+  Protocol tests: {N} run | Pass: {N} | Divergences: {N} | Flaky: {N}
+  (omitted entirely if --internal-check != behavior)
 
 ═══ COMBINED FINDINGS (sorted by severity) ═══
 
@@ -839,9 +1018,9 @@ Use the `# Project Review:` header with a **dynamic scope description** (derived
 
 | Sync Severity | Review Severity | Condition |
 |---------------|-----------------|-----------|
-| critical | blocker | Missing API (symbol defined in spec but absent from implementation) |
-| critical | critical | Signature mismatch, type mismatch, spec chain contradiction |
-| warning | warning | Naming inconsistency, doc mismatch, missing README section |
+| critical | blocker | Missing API (symbol defined in spec but absent from implementation); missing trait/interface satisfaction; missing constructor variant |
+| critical | critical | Signature mismatch, type mismatch, spec chain contradiction; **skeleton checkpoint missing or reordered** (Step 4A); **behavioral divergence** from tester (Step 7.5) |
+| warning | warning | Naming inconsistency, doc mismatch, missing README section; **skeleton has extra checkpoint not in spec**; **flaky behavior test** from tester |
 | info | _(skip)_ | Not included — info-level findings are not actionable bugs |
 
 **Rules:**
@@ -929,16 +1108,40 @@ PHASE A FIXES (code):
    - Add the export to the main module file
    - Create a corresponding test stub in tests/
 
-3. VERIFY — After all Phase A fixes:
+3. MISSING TRAIT/INTERFACE SATISFACTION — For each missing contract:
+   - Look up the language's idiomatic mechanism in Step 4.2 item 4 equivalence table
+     (e.g., `Display` → Python `__str__`, TS `toString()`, Go `String() string`, Rust `impl Display`, Java `toString()`)
+   - Generate a stub implementation with a TODO marker explaining the contract
+   - For Rust derive-eligible contracts (`Clone`, `Debug`, `PartialEq`, `Hash`, `Default`, `Serialize`), prefer adding the appropriate `#[derive(...)]` attribute
+   - Add a corresponding test asserting the contract is satisfied (e.g., `str(obj)` returns non-empty)
+
+4. MISSING CONSTRUCTOR VARIANT — For each spec-declared constructor missing from the implementation:
+   - Generate a stub matching the spec signature, using the language's idiomatic factory mechanism
+     (Python `@classmethod`, TS `static`, Go `NewX*` function in same package, Rust `impl Self { fn with_… }`, Java `static` factory or overloaded constructor)
+   - Add to the main export and create a test stub
+
+5. MISSING CHECKPOINT INSTRUMENTATION — For each method whose implementation has no checkpoint markers but spec declares an `## Algorithm` section:
+   - For each spec-declared checkpoint, insert a logger/tracer call at the textually appropriate position in the method body, using the language-specific marker form from Step 4A's table
+     (Python `logger.debug("checkpoint:NAME")`, TS `logger.debug("checkpoint:NAME")`, Go `slog.Debug("checkpoint:NAME")`, Rust `tracing::debug!("checkpoint:NAME")`, Java `logger.debug("checkpoint:NAME")`)
+   - Position is BEST-EFFORT — insert the marker just before the line that performs the named work, when identifiable
+   - If position cannot be inferred from existing code, group all markers at the top of the method body in spec order, with a TODO comment
+
+6. CHECKPOINT REORDERING — **MANUAL REVIEW ONLY, do NOT auto-fix.**
+   - If implementation order differs from spec order, the algorithm semantics may differ deliberately. Reordering checkpoints could introduce a bug.
+   - Add the finding to MANUAL_REVIEW_ITEMS with the diff and let the operator decide whether the spec or the implementation is correct.
+
+7. VERIFY — After all Phase A fixes:
    - Run the full test suite: {pytest --tb=short -q | npx vitest run}
    - If any test fails due to a fix: revert ONLY that specific fix and note it
 
 PHASE B FIXES (docs, examples, tests):
-4. README FIXES — Add missing sections, update API names to match verified API, update version references
-5. API REFERENCE FIXES — Update symbol names, param names, import paths in all markdown files
-6. EXAMPLE FIXES — Update API usage and dependency versions in example code. For missing example scenarios identified in cross-repo comparison: generate stub example files with TODO markers showing expected scenario.
-7. TEST FIXES — Update API usage in tests to match verified API (renamed methods, updated params). For missing test scenarios identified in cross-repo comparison: generate test stub files with TODO markers showing expected test cases and the reference implementation's test for guidance.
-8. CONTRADICTION FIXES — Resolve contradictions by aligning all docs to verified API
+8. README FIXES — Add missing sections, update API names to match verified API, update version references
+9. API REFERENCE FIXES — Update symbol names, param names, import paths in all markdown files
+10. EXAMPLE FIXES — Update API usage and dependency versions in example code. For missing example scenarios identified in cross-repo comparison: generate stub example files with TODO markers showing expected scenario.
+11. TEST FIXES — Update API usage in tests to match verified API (renamed methods, updated params). For missing test scenarios identified in cross-repo comparison: generate test stub files with TODO markers showing expected test cases and the reference implementation's test for guidance.
+12. CONTRADICTION FIXES — Resolve contradictions by aligning all docs to verified API
+13. BEHAVIORAL DIVERGENCE — **MANUAL REVIEW ONLY, do NOT auto-fix.**
+    - Add tester divergence findings to MANUAL_REVIEW_ITEMS with the failing input/output diff. Behavioral fixes require understanding spec intent, not pattern matching.
 
 After all fixes:
 1. List all files modified with a summary of changes
@@ -948,11 +1151,12 @@ Error handling: If test runner is not available, skip verification and note it.
 
 Return:
 REPO: {repo-name}
-PHASE_A_FIXES: {count} (naming: {n}, stubs: {n})
+PHASE_A_FIXES: {count} (naming: {n}, stubs: {n}, traits: {n}, constructors: {n}, checkpoints: {n})
 PHASE_B_FIXES: {count} (readme: {n}, api-refs: {n}, examples: {n}, tests: {n}, contradictions: {n})
 TEST_RESULT: {pass|fail|skipped}
 TEST_COUNTS: {passed}/{total}
 REVERTED_FIXES: {list or "none"}
+MANUAL_REVIEW_ITEMS: {list — checkpoint reorderings, behavioral divergences, ambiguous trait stubs}
 FILES_MODIFIED: {list}
 ```
 

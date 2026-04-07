@@ -132,26 +132,63 @@ For each exported symbol, extract:
   "generics": [],                       // generic type parameters + bounds
   "derives": ["Clone", "Debug"],        // Rust derive macros
   "feature_flag": null,                 // conditional compilation feature
-  "constructor": {
-    "params": [
-      {"name": "config", "type": "Config", "required": true, "default": null},
-      {"name": "discoverers", "type": "List[Discoverer]", "required": false, "default": "[]"}
-    ]
-  },
+  "constructors": [                     // LIST — every construction path the spec declares
+    {
+      "name": "new",                    // canonical: "new" | "with_config" | "from_env" | ...
+      "params": [
+        {"name": "config", "type": "Config", "required": true, "default": null}
+      ],
+      "return_type": "Self"
+    },
+    {
+      "name": "with_defaults",
+      "params": [],
+      "return_type": "Self"
+    }
+  ],
   "methods": [
     {
       "name": "register",
       "params": [...],
       "return_type": "None",
-      "async": false
+      "async": false,
+      "skeleton": [                     // ordered checkpoint markers found in source body
+        "validate_id_format",
+        "check_duplicate",
+        "resolve_dependencies",
+        "acquire_write_lock",
+        "insert_into_index",
+        "emit_registered_event",
+        "release_write_lock"
+      ]
     }
   ],
-  "trait_impls": [                      // Rust: which traits this struct implements
-    {"trait": "Display", "methods": ["fmt"]},
-    {"trait": "From<Config>", "methods": ["from"]}
+  "trait_impls": [                      // Idiomatic interface contracts satisfied by this class
+    {"contract": "Display", "method": "fmt"},        // Rust
+    {"contract": "Serializable", "method": "to_dict"} // Python
   ]
 }
 ```
+
+**Trait/interface satisfaction extraction (per language).**
+
+| Language | How to detect satisfaction |
+|---|---|
+| Python | Class inherits from `ABC` / `Protocol`; class implements dunder methods (`__str__`, `__eq__`, `__hash__`, `__iter__`, `__enter__`/`__exit__`); class has a `to_dict` / `from_dict` pair |
+| TypeScript | `class X implements Y`; class has `toString()`, `[Symbol.iterator]`, `[Symbol.dispose]`; class has `toJSON()` |
+| Go | Method set satisfies a known interface — grep for receiver methods like `String() string`, `Error() string`, `MarshalJSON() ([]byte, error)`, `Equal(other) bool`, `Close() error` |
+| Rust | `impl Trait for X` blocks across the entire crate (Step E.1.4); `#[derive(...)]` macros (Step E.1.7) — derives count as satisfaction |
+| Java | `class X implements Y`; presence of `equals/hashCode`, `toString`, `compareTo`, `iterator()` |
+
+**Multi-constructor extraction (per language).**
+
+| Language | What to collect |
+|---|---|
+| Python | `__init__` + every `@classmethod` returning `cls(...)` instance (e.g., `from_dict`, `from_env`, `default`) |
+| TypeScript | `constructor(...)` + every `static` method returning an instance of the same class |
+| Go | Every top-level `NewX*` function in the same package returning `*X` or `X` |
+| Rust | Every `fn` in `impl X` blocks returning `Self` or `X` (e.g., `new`, `with_config`, `from_env`, `default`) |
+| Java | All overloaded constructors + every `static` factory method returning the class type |
 
 **Step E.3: Normalize for comparison**
 
@@ -190,6 +227,49 @@ Default type mappings:
 | Callback | `Callable` | `(...) => T` | `func(...)` | `Fn(...)` / `FnMut(...)` / `FnOnce(...)` | `Function<T,R>` | `callable` |
 
 > **Note:** This table covers common single-level generics. For nested generics (e.g., `Result<Option<Vec<T>>, E>`), represent the full type structure. When structural equivalence is ambiguous, flag for manual review rather than guessing.
+
+**Default value equivalence (across languages).**
+
+When the spec declares a parameter default, each language expresses it differently. The following are considered EQUIVALENT during checklist comparison — do NOT flag as mismatch:
+
+| Concept | Python | TypeScript | Go | Rust | Java |
+|---|---|---|---|---|---|
+| Empty list | `[]` / `None` (sentinel) | `[]` / `undefined` | `nil` slice / zero-length | `Vec::new()` / `vec![]` / `Default::default()` | `Collections.emptyList()` / `null` |
+| Empty map | `{}` / `None` | `{}` / `undefined` | `nil` map / `make(map[K]V)` | `HashMap::new()` / `Default::default()` | `Collections.emptyMap()` / `null` |
+| Empty string | `""` | `""` | `""` | `String::new()` / `""` | `""` |
+| Zero number | `0` / `0.0` | `0` | `0` | `0` / `0.0` / `Default::default()` | `0` / `0L` / `0.0` |
+| False | `False` | `false` | `false` | `false` | `false` |
+| None / null | `None` | `undefined` / `null` | `nil` (zero value) | `None` (Option) | `null` / `Optional.empty()` |
+| Builder default | `cls()` no-arg | `new X()` no-arg | `&X{}` zero-value | `X::default()` / `X::new()` | `new X()` no-arg |
+| Function/callback no-op | `lambda *a, **kw: None` / `None` | `() => {}` / `undefined` | `nil` func / no-op closure | `\|\| {}` / `None` | `() -> {}` / `null` |
+| Current time | `datetime.now()` | `new Date()` | `time.Now()` | `Instant::now()` | `Instant.now()` |
+
+**Default value semantic categories.** When comparing defaults, classify each into one of: `empty_collection`, `zero`, `none`, `default_construct`, `noop_callback`, `current_time`, `literal`. Two defaults match iff they fall into the same category — exact textual form doesn't matter. For `literal`, the literal value must match (e.g., `timeout=30` in all languages).
+
+**Sentinel pattern (Python-specific):** Python often uses `def f(items=None): items = items or []` because `[]` as a default is mutable. When comparing, treat `param=None` + first-line `items = items or []` as `empty_collection` default, NOT as `none`.
+
+**Step E.4a: Algorithm Checkpoint Extraction**
+
+For each public method body, extract the ordered list of `checkpoint:NAME` markers literally present in the source. This is the input for sync's Step 4A skeleton consistency check.
+
+**Marker conventions (per language).** Sub-agents grep for these literal patterns inside the method body, in source order:
+
+| Language | Pattern (regex) | Example call site |
+|---|---|---|
+| Python | `["']checkpoint:([a-z_][a-z0-9_]*)["']` | `logger.debug("checkpoint:validate_id_format")` |
+| TypeScript | `["'\`]checkpoint:([a-z_][a-z0-9_]*)["'\`]` | `logger.debug("checkpoint:validate_id_format")` |
+| Go | `"checkpoint:([a-z_][a-z0-9_]*)"` | `slog.Debug("checkpoint:validate_id_format")` |
+| Rust | `"checkpoint:([a-z_][a-z0-9_]*)"` | `tracing::debug!("checkpoint:validate_id_format")` |
+| Java | `"checkpoint:([a-z_][a-z0-9_]*)"` | `logger.debug("checkpoint:validate_id_format")` |
+
+**Rules:**
+1. **Source-order only** — return checkpoints in the order they textually appear in the method body, NOT in any inferred runtime order. If a checkpoint appears inside an `if` branch, still record it at its textual position.
+2. **No invention** — only return checkpoints that are literally in the source. If a method has zero markers, return `[]`.
+3. **Per-method scope** — checkpoints belong to the smallest enclosing function/method. Don't bubble up to outer scopes.
+4. **Loops and branches** — if a checkpoint appears inside a loop, record it once at its textual position. If branches have different checkpoints, list them in textual order — the comparison logic will handle subsetting.
+5. **Comments and disabled code** — ignore checkpoints inside `//`, `#`, `/* */`, or string literals that are NOT inside a logger call.
+
+This pairs with Step 4A in `skills/sync/SKILL.md`.
 
 **Step E.5: Extraction Verification**
 
