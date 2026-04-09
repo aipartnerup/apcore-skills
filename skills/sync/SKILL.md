@@ -53,6 +53,8 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | "I can check docs without verifying code first" | Phase B depends on Phase A. If Phase A has not established ground truth, docs verification is comparing against potentially wrong code. |
 | "Checking a few symbols is representative" | Build the complete checklist. Compare every item. Partial checks create false confidence. |
 | "CHANGELOG has the wrong API name" | CHANGELOG is a release artifact, not documentation. Leave it to the release skill. |
+| "Doc examples are just illustrative" | If a code example calls a non-existent method or passes the wrong number of args, a user copying it will get a compile/runtime error. Doc examples ARE the onboarding API — treat them as code. |
+| "Deprecated APIs in docs are just stale" | If CHANGELOG says an API was removed in v0.18.0 but docs still reference it, users following the docs will hit errors on the current version. Cross-check CHANGELOG Removed sections against doc examples. |
 | "PRD is product-level, no need to check against code" | If the PRD says a feature exists but no implementation matches, that is a gap. Every layer must agree. |
 | "Internal helpers should also be 1-to-1 across languages" | NO. Function-level identity conflicts with each language's design (Rust ownership splits, Go's no-default-args, Python list comprehensions). Internal consistency CAN be enforced at the SKELETON level (algorithm checkpoint sequence — opt in via `--internal-check=skeleton`) and the BEHAVIOR level (delegated to `tester` — opt in via `--internal-check=behavior`). Both are off by default; helper-name parity is never enforced at any tier. |
 | "Trait satisfaction is a Rust thing, skip it for other languages" | Every language has an equivalent: Python `__str__` / TS `toString()` / Go `String()` / Rust `impl Display`. The protocol spec defines required interface contracts; each language must satisfy them with its idiomatic mechanism. Build a dedicated checklist row. |
@@ -326,6 +328,12 @@ For each documentation repo in scope, read the authoritative specs:
 3. If a protocol or spec file exists — extract the API contract
 
 Store as `spec_api[scope]` (canonical API surface) and `spec_skeletons[scope][symbol]` (algorithm checkpoint sequences keyed first by scope, then by symbol). Both must be matched by implementations.
+
+**For all documentation repos:**
+
+6. Read `{doc_repo_path}/CHANGELOG.md` — extract all symbols listed under `### Removed` or `### Deprecated` sections, grouped by version. Store as `deprecated_api[scope]` = list of `{symbol, version, section}` entries. These are used in Phase B Step 6 to flag doc examples that reference removed/deprecated APIs.
+
+   CHANGELOG is NOT checked for its own correctness (that remains a release artifact). It is used ONLY as a **signal source** to detect stale references in documentation examples.
 
 **Algorithm section format (convention).** Feature specs SHOULD declare algorithm skeletons in this form so that Step 4A can parse them:
 
@@ -638,6 +646,55 @@ Check all internal cross-references:
 2. Are version numbers consistent across documents?
 3. Are terminology and naming consistent (same concept uses same name everywhere)?
 
+=== SCOPE 4: Documentation Code Example Correctness ===
+
+Extract ALL fenced code blocks from docs/**/*.md files (getting-started.md, api/*.md,
+features/*.md, guides/*.md). For each code block:
+
+1. Identify the language (from the fenced block language tag: python, typescript, rust)
+2. Extract API calls — class instantiation, method invocations, function calls, imports
+3. Cross-reference each extracted symbol against the VERIFIED API from Phase A:
+   a. Does the class/function exist in the verified API?
+   b. Does the method exist on the class?
+   c. Does the argument COUNT match the verified signature? (e.g., `call(a, b)` but
+      verified signature is `call(a, b, c, d)` → FAIL: missing args)
+   d. For Rust examples: does the code use `Box::new(...)` where the API expects
+      `Box<dyn Trait>`? Does it use `.await` on async methods? Does it use `?` for
+      Result returns? Does it use `let mut` when calling `&mut self` methods?
+   e. For TypeScript examples: does it use `await` on async/Promise methods?
+   f. Does the import path match what the SDK actually exports?
+
+4. Cross-reference code blocks in the SAME section across language tabs:
+   - If the Python tab calls `client.call("math.add", {"a": 1})` and the Rust tab
+     calls `client.call("math.add", json!({"a": 1}))`, do both pass the same number
+     of arguments? (Rust may have extra None/None for optional params)
+   - Are all three language tabs present where the project's documentation rules
+     require them? (Cross-language example convention)
+
+5. Check for language-specific API adaptations documented in client-api.md §10:
+   - If a Rust example calls `.use()` — that is a reserved keyword, should be `.use_middleware()`
+   - If a Rust example shows `futures::StreamExt` — verify `futures` is in Cargo.toml
+   - If a Rust example uses a proc-macro `#[apcore::module]` — verify it actually exists
+
+Severity:
+- Code example references a non-existent method or class → critical
+- Argument count mismatch (fewer args than required params) → critical
+- Missing `await`/`?`/`Box::new` in Rust/TypeScript → warning
+- Missing language tab where cross-language tabs are required → warning
+- Import path incorrect → warning
+
+=== SCOPE 5: Deprecated API Detection in Examples ===
+
+Using the deprecated_api list from Step 3 (extracted from CHANGELOG.md):
+
+1. For each deprecated or removed symbol, grep ALL docs/**/*.md files for references
+2. If a code example uses a symbol that was listed under `### Removed` in any
+   CHANGELOG version up to and including the current version → critical
+3. If a code example uses a symbol listed under `### Deprecated` → warning
+
+This catches the pattern where a CHANGELOG removes an event name (e.g., `module_health_changed`)
+but a docs/features/*.md example still references it.
+
 Return findings in this exact format:
 DOC_REPO: {repo-name}
 DOCUMENTS_FOUND: {list of documents checked with paths}
@@ -650,7 +707,7 @@ SPEC_CHAIN:
 FINDING_COUNT: {N}
 FINDINGS:
 - severity: {critical|warning|info}
-  scope: {spec-chain|completeness|cross-ref}
+  scope: {spec-chain|completeness|cross-ref|code-example|deprecated-api}
   detail: {description}
   locations:
     - {file1:section} says: "{quote1}"
@@ -658,10 +715,18 @@ FINDINGS:
   contradiction: {what disagrees}
   fix: {which document should be authoritative and what to change}
 
+CODE_EXAMPLES:
+  FILES_SCANNED: {N}
+  CODE_BLOCKS_CHECKED: {N}
+  API_MISMATCHES: {N}
+  MISSING_LANG_TABS: {N}
+  DEPRECATED_REFS: {N}
+
 Error handling:
 - If the documentation repo path does not exist, return: DOC_REPO: {repo-name}, STATUS: NOT_FOUND
 - If no spec chain documents are found (no PRD, SRS, tech design, feature specs), return: DOC_REPO: {repo-name}, STATUS: NO_DOCS, DOCUMENTS_FOUND: []
 - If individual files cannot be read, skip them and list in DOCUMENTS_FOUND as "{path} (unreadable)"
+- If CHANGELOG.md is missing or has no Removed/Deprecated sections, skip SCOPE 5 and report DEPRECATED_REFS: 0
 ```
 
 #### Sub-agent for Implementation Repo (apcore-python/, apcore-typescript/, etc.)
@@ -868,6 +933,8 @@ Store merged findings in `phase_b_behavior_findings` for inclusion in Step 8 and
   Contradictions: {N}
   Completeness gaps: {N}
   Cross-ref issues: {N}
+  Code example mismatches: {N}
+  Deprecated API refs: {N}
 
   CONTRADICTIONS:
     ⚠ PRD §3.2 says "Registry supports glob patterns"
@@ -1196,6 +1263,16 @@ Fix rules:
 3. CROSS-REFERENCE FIXES — Fix broken internal references:
    - Update section references to point to correct locations
    - Fix terminology inconsistencies to use the canonical name
+
+4. CODE EXAMPLE FIXES — For each code example mismatch found in SCOPE 4:
+   - Fix method names, parameter counts, and import paths to match verified API
+   - Add missing `await`, `?`, `Box::new()`, `let mut` as needed for Rust/TypeScript
+   - Add missing language tabs where cross-language convention requires them
+   - Replace deprecated API references with their canonical replacements from CHANGELOG
+
+5. DEPRECATED API CLEANUP — For each deprecated/removed API reference found in SCOPE 5:
+   - Replace with the canonical replacement symbol (look up in CHANGELOG's corresponding Added/Changed section)
+   - If no replacement exists, remove the example or mark with an admonition
 
 After all fixes:
 1. List all files modified

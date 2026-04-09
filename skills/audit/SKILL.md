@@ -154,6 +154,16 @@ Compare across repos:
 - Missing symbols (in one, not the other)
 - Method count mismatches per class
 - Constructor param count mismatches
+- **Method param count mismatches** — for each shared method, compare the number of
+  parameters across implementations. If Python `call()` has 4 params but TypeScript
+  `call()` has 3, flag it. Use the spec/canonical definition as reference when available.
+- **Global wrapper alignment** — if a language provides module-level convenience functions
+  (e.g., Python `apcore.call()` wrapping `APCore.call()`), verify the wrapper has the
+  SAME parameter count as the class method it wraps. A wrapper with fewer params silently
+  drops functionality (e.g., missing `version_hint`). Check:
+  - Python: compare `__init__.py` top-level functions against `client.py` class methods
+  - TypeScript: compare default export functions against class methods
+  Severity: warning for param count mismatch in wrappers
 
 Return findings in format:
 Error handling:
@@ -486,6 +496,24 @@ For each repo, perform ALL of the following checks:
     are reachable from a public export) to (total lines). If reachability cannot be
     determined statically, skip this check and note it.
 
+12. STUB / NO-OP IMPLEMENTATIONS — public methods that have the correct signature but do
+    nothing meaningful. These pass API surface checks (D1) and sync Phase A but provide
+    no actual functionality. Detect by looking for:
+    a. Methods whose ENTIRE body (excluding comments) is a single return statement with a
+       default/zero value: `return Ok(default_value)`, `return {}`, `return 0`, `return []`,
+       `return None`, `Ok(())`, `pass`, or equivalent. A method that performs work THEN
+       returns `Ok(())` is NOT a stub — only flag methods where the return is the ONLY statement.
+    b. Methods that silently discard named parameters via `let _ = param_name` (Rust),
+       `_ = param` (Python), or unused parameter prefixes (`_param`) while the spec
+       implies the parameter should affect behavior
+    c. Methods with a `// TODO`, `// no-op`, `// stub`, `// reserved for future use`
+       comment as the only meaningful content
+    d. Async methods that never actually await anything (sync body in async wrapper)
+    For each detected stub, check if the spec/docs promise the method does something:
+    - If spec describes actual behavior but implementation is a stub → severity: critical
+    - If implementation is a stub with a clear "reserved for future" note → severity: warning
+    - If the method is a lifecycle hook (on_load, on_unload, shutdown) with empty body → severity: info
+
 Use Grep extensively. Read files at signature level when needed. Do NOT trust naming
 alone — verify with actual references.
 
@@ -500,7 +528,7 @@ FINDING_COUNT: {N}
 FINDINGS:
 - severity: {critical|warning|info}
   repo: {repo-name}
-  category: {dead_export|unused_internal|duplicate|parallel_impl|stale|unused_config|unused_dep|wrapper|scope_creep|loc_growth|reachability}
+  category: {dead_export|unused_internal|duplicate|parallel_impl|stale|unused_config|unused_dep|wrapper|scope_creep|loc_growth|reachability|stub_noop}
   detail: {description}
   location: {file:line if applicable}
   fix: {suggested fix — deletion, merge, inline, etc.}
@@ -516,6 +544,7 @@ BLOAT_SUMMARY:
   unused_config: {N}
   unused_deps: {N}
   scope_creep_files: {N}
+  stub_noops: {N}
 ```
 
 ---
@@ -626,7 +655,8 @@ Fix rules (apply in order):
    - stale (commented-out blocks ≥ 10 lines, ancient TODOs) → delete
    - unused_config → remove the config key from defaults and validation
    - unused_dep → remove from pyproject.toml / package.json / Cargo.toml and lockfile
-   Skip (leave for human): parallel_impl (needs design decision), scope_creep (needs spec discussion), cross-repo duplicates (needs shared-lib coordination)
+   - stub_noop (critical, spec promises behavior) → implement the method per spec; delegate to `/apcore-skills:sync --fix` for signature reference
+   Skip (leave for human): parallel_impl (needs design decision), scope_creep (needs spec discussion), cross-repo duplicates (needs shared-lib coordination), stub_noop with severity warning/info (may be intentional placeholders)
 2. NAMING FIXES (D2) — Rename files/symbols to match conventions
 3. VERSION FIXES (D3) — Update version strings for consistency
 4. STRUCTURE FIXES (D8) — Create missing directories/files with stubs
