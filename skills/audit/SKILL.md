@@ -9,6 +9,18 @@ description: >
 
 # Apcore Skills — Audit
 
+## ⚡ Execution Entry Point (READ THIS FIRST)
+
+**When this skill is loaded, you MUST immediately begin executing the Workflow below — do not wait, do not summarize, do not ask "what should I do now". Skills are operational manuals, not reference documents.** Read Step 0 (Ecosystem Discovery), then Step 1 (Parse Arguments), then Step 2 (Execute Audit Dimensions), etc., until the workflow completes or you reach an `AskUserQuestion` checkpoint.
+
+If the harness shows you `Successfully loaded skill · N tools allowed`, that message means **the SKILL.md content was injected into your context** — it does NOT mean the skill has run. Skills do not "run" autonomously; you run them by executing the Detailed Steps below.
+
+If you find yourself about to say "the skill didn't produce output", "skill 仍未输出", "falling back to manual audit", "回退到手动 audit", or anything similar, **STOP**. You have misunderstood how skills work. Go directly to Step 0 and start executing.
+
+The first user-visible action of this skill should be either (a) the output of Step 0 / Step 1, or (b) an `AskUserQuestion` if scope detection needs disambiguation. Never an apology, never a fallback, never silence.
+
+---
+
 Comprehensive consistency audit across all apcore ecosystem repositories.
 
 ## Iron Law
@@ -36,7 +48,7 @@ Comprehensive consistency audit across all apcore ecosystem repositories.
 
 ## Audit Dimensions
 
-The audit covers 8 dimensions, each checking specific aspects:
+The audit covers 9 dimensions, each checking specific aspects:
 
 | # | Dimension | Severity Range | Description |
 |---|---|---|---|
@@ -48,6 +60,7 @@ The audit covers 8 dimensions, each checking specific aspects:
 | D6 | Dependencies | critical-warning | Dependency versions and compatibility |
 | D7 | Configuration | warning-info | APCORE_* settings consistency across integrations |
 | D8 | Project Structure | warning-info | File/directory layout per conventions |
+| D9 | **Bloat & Redundancy** | **critical-info** | **Dead exports, duplicate symbols, parallel implementations, LOC growth, unused config, scope creep** |
 
 ## Severity Levels
 
@@ -64,7 +77,7 @@ The audit covers 8 dimensions, each checking specific aspects:
 2. Aggregation — collecting structured findings from all sub-agents
 3. Reporting — formatting and displaying the consolidated report
 
-Step 2 spawns **up to 8 parallel sub-agents** (one per dimension, all simultaneously). Step 4 spawns **one parallel sub-agent per repo** for fixes. The main context never reads repo files directly.
+Step 2 spawns **up to 9 parallel sub-agents** (one per dimension, all simultaneously). Step 4 spawns **one parallel sub-agent per repo** for fixes. The main context never reads repo files directly.
 
 ## Workflow
 
@@ -89,11 +102,11 @@ Parse `$ARGUMENTS` for flags.
 **If `--scope` is NOT specified:**
 1. Detect CWD repo name (basename of CWD)
 2. Look up in discovered ecosystem:
-   - `core-sdk` repo → audit only this repo, dimensions D1-D3, D5-D6, D8
-   - `mcp-bridge` repo → audit only this repo, dimensions D1-D3, D5-D6, D8
-   - `integration` repo → audit only this repo, dimensions D2-D8
-   - `protocol`/`docs-site` repo → audit documentation dimensions only (D4) for this repo
-   - `shared-lib`/`tooling` repo → audit D2 (naming), D4 (docs), D5 (tests), D8 (structure) for this repo
+   - `core-sdk` repo → audit only this repo, dimensions D1-D3, D5-D6, D8-D9
+   - `mcp-bridge` repo → audit only this repo, dimensions D1-D3, D5-D6, D8-D9
+   - `integration` repo → audit only this repo, dimensions D2-D9
+   - `protocol`/`docs-site` repo → audit documentation dimensions (D4) and bloat (D9) for this repo
+   - `shared-lib`/`tooling` repo → audit D2 (naming), D4 (docs), D5 (tests), D8 (structure), D9 (bloat) for this repo
    - CWD not an apcore repo → use `AskUserQuestion` to ask: "CWD is not an apcore repo. Which repo do you want to audit?" with options from `repos[]` names + "All repos (full ecosystem audit)"
 3. Display: "Scope: {repo-name} (from CWD). Use --scope all for full ecosystem audit."
 
@@ -103,10 +116,12 @@ Parse `$ARGUMENTS` for flags.
 
 | Scope | Repos | Dimensions |
 |---|---|---|
-| `core` | Core SDKs | D1-D3, D5-D6, D8 |
-| `mcp` | MCP bridges | D1-D3, D5-D6, D8 |
-| `integrations` | Framework integrations | D2-D8 (no cross-API sync) |
+| `core` | Core SDKs | D1-D3, D5-D6, D8-D9 |
+| `mcp` | MCP bridges | D1-D3, D5-D6, D8-D9 |
+| `integrations` | Framework integrations | D2-D9 (no cross-API sync) |
 | `all` | All repos | All dimensions |
+
+**D9 (Bloat & Redundancy) is always included.** It applies to every scope and every repo type — it is the apcore ecosystem's primary defense against the additive bias of skill-driven feature work.
 
 Display:
 ```
@@ -392,6 +407,117 @@ FINDINGS:
   fix: {suggested fix}
 ```
 
+#### Sub-agent: D9 — Bloat & Redundancy Audit
+
+**Prompt:**
+```
+Audit code bloat and redundancy across apcore ecosystem repos.
+
+Repos: {repo_paths}
+
+This dimension is the primary defense against additive bias from skill-driven workflows
+(spec-forge / code-forge / apcore-skills) that bias toward "add new" over "reuse existing".
+Be thorough — bloat does not surface in any other audit dimension.
+
+For each repo, perform ALL of the following checks:
+
+1. DEAD EXPORTS — public symbols (classes, functions, constants, types) declared in the
+   main export file (__init__.py / index.ts / lib.rs / mod.rs) that have zero callers
+   anywhere in the ecosystem. Cross-check against ALL repos in scope when possible — a
+   symbol exported by core-sdk but never imported by any integration or downstream repo
+   is a strong dead-export signal.
+   - severity: warning (zero internal + zero external callers)
+   - severity: critical (entire submodule with no callers)
+
+2. UNUSED INTERNAL SYMBOLS — non-exported functions, classes, helpers, or methods inside
+   src/ that are defined but never referenced in the same repo. Use grep across the repo
+   for each candidate. Skip test fixtures and __all__-listed symbols.
+   - severity: warning per unused symbol
+   - severity: critical if a whole file is dead
+
+3. DUPLICATE / NEAR-DUPLICATE FUNCTIONS — within a repo, look for functions with
+   structurally identical bodies (≥ 5 statements) that differ only in literals or naming.
+   Across repos in the same language, look for utility functions that have been
+   independently reimplemented (string utils, path utils, type guards, schema helpers).
+   - severity: warning (intra-repo duplicates)
+   - severity: critical (cross-repo duplicates of utility code that should live in shared-lib)
+
+4. PARALLEL IMPLEMENTATIONS — two or more modules within a repo that implement the same
+   concept slightly differently (e.g., two HTTP client wrappers, two config loaders, two
+   logger adapters). This is the most common bloat pattern from feature-by-feature
+   planning.
+   - severity: critical — propose merging
+
+5. STALE / COMMENTED-OUT CODE — large commented-out blocks (≥ 10 lines), files containing
+   only TODOs older than the most recent release tag, modules marked deprecated with no
+   removal date.
+   - severity: info (small blocks)
+   - severity: warning (large blocks or files)
+
+6. UNUSED CONFIG / FLAGS — APCORE_* settings, CLI flags, environment variables, or
+   .code-forge.json keys that are declared but never read by any code path. Grep for the
+   key name across the repo (and across the ecosystem for cross-repo settings).
+   - severity: warning
+
+7. UNUSED DEPENDENCIES — packages declared in pyproject.toml / package.json / Cargo.toml
+   that are never imported. Use the project's dependency analyzer if available, otherwise
+   grep for import statements.
+   - severity: warning
+   - severity: critical if the unused dependency is large or has known CVEs
+
+8. WRAPPER / PASSTHROUGH FUNCTIONS — functions whose entire body is a single call to
+   another function with the same arguments, or that only rename fields. Often introduced
+   "for future flexibility" but never extended.
+   - severity: warning
+
+9. SCOPE CREEP DETECTION — for each feature directory under planning/ (if present), read
+   plan.md and check whether the actual implementation introduced files, modules, or
+   public APIs not mentioned in the plan. Cross-reference state.json `tasks[].commits` if
+   available.
+   - severity: warning (extra files)
+   - severity: critical (extra public API)
+
+10. LOC GROWTH SIGNAL — compute total source LOC of the repo (excluding tests, vendor,
+    generated code). If git history is available, compare against the LOC at the previous
+    release tag. Surface as INFO finding regardless of magnitude — this is a trend signal,
+    not a defect by itself.
+
+11. NET-TO-USEFUL-CODE RATIO — for each src/ directory, compute the ratio of (lines that
+    are reachable from a public export) to (total lines). If reachability cannot be
+    determined statically, skip this check and note it.
+
+Use Grep extensively. Read files at signature level when needed. Do NOT trust naming
+alone — verify with actual references.
+
+Error handling:
+- If a repo path does not exist, report as: severity=info, detail="Repo not found at {path}"
+- If git history is unavailable, skip LOC growth check and note it
+- Do NOT fail the entire audit if reachability analysis fails for one repo
+
+Return findings in this exact format:
+DIMENSION: D9 — Bloat & Redundancy
+FINDING_COUNT: {N}
+FINDINGS:
+- severity: {critical|warning|info}
+  repo: {repo-name}
+  category: {dead_export|unused_internal|duplicate|parallel_impl|stale|unused_config|unused_dep|wrapper|scope_creep|loc_growth|reachability}
+  detail: {description}
+  location: {file:line if applicable}
+  fix: {suggested fix — deletion, merge, inline, etc.}
+BLOAT_SUMMARY:
+- repo: {repo-name}
+  total_loc: {N}
+  loc_at_last_release: {N or "unknown"}
+  delta: {N or "unknown"}
+  dead_exports: {N}
+  unused_internal: {N}
+  duplicates: {N}
+  parallel_impls: {N}
+  unused_config: {N}
+  unused_deps: {N}
+  scope_creep_files: {N}
+```
+
 ---
 
 ### Step 3: Aggregate and Display Report
@@ -416,8 +542,9 @@ Repos audited: {count}
   D6 Dependencies        |    1     |    2    |   0
   D7 Configuration       |    0     |    3    |   1
   D8 Project Structure   |    0     |    1    |   2
+  D9 Bloat & Redundancy  |    1     |    8    |   5
   ─────────────────────────────────────────────────
-  TOTAL                  |    4     |   17    |  13
+  TOTAL                  |    5     |   25    |  18
 
 ═══ CRITICAL FINDINGS ═══
 
@@ -438,6 +565,21 @@ Repos audited: {count}
 ═══ INFO FINDINGS ═══
 (grouped by dimension)
 
+═══ BLOAT REPORT (D9) ═══
+
+  Repo                  | LOC    | Δ vs last | Dead | Dup | Parallel | Unused Cfg | Unused Dep | Scope Creep
+  apcore-python         | 12450  | +2310     |  4   |  3  |    1     |     2      |     1      |      0
+  apcore-typescript     | 11200  | +1980     |  6   |  2  |    0     |     1      |     0      |      2
+  django-apcore         |  4500  |  +890     |  2   |  1  |    0     |     0      |     0      |      1
+  flask-apcore          |  3800  |  +710     |  1   |  0  |    0     |     0      |     0      |      0
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  TOTAL                 | 31950  | +5890     | 13   |  6  |    1     |     3      |     1      |      3
+
+  Top bloat hotspots (act on these first):
+    1. apcore-typescript: 6 dead exports — see [D9-002] through [D9-007]
+    2. apcore-python: parallel HTTP client implementations — see [D9-014]
+    3. django-apcore: scope creep in user-auth feature (+3 unplanned files)
+
 ═══ HEALTH SCORE ═══
 
   Overall: {score}/100
@@ -447,7 +589,10 @@ Repos audited: {count}
   Documentation: {score}/100
   Test Coverage: {score}/100
   Dependencies: {score}/100
+  Leanness (D9):     {score}/100
 ```
+
+**Leanness score formula:** Start at 100. Subtract 5 per `critical` D9 finding, 2 per `warning`, 0.5 per `info`. Floor at 0. A leanness score below 70 indicates the repo needs a dedicated cleanup pass before the next release.
 
 If `--save` flag: write full report to specified path.
 
@@ -473,10 +618,19 @@ Fixable findings:
 {all fixable findings for this repo from Step 3}
 
 Fix rules (apply in order):
-1. NAMING FIXES (D2) — Rename files/symbols to match conventions
-2. VERSION FIXES (D3) — Update version strings for consistency
-3. STRUCTURE FIXES (D8) — Create missing directories/files with stubs
-4. DOC FIXES (D4) — Add missing README sections, fix CHANGELOG format
+1. BLOAT FIXES (D9) — Apply BEFORE structural fixes so we don't add scaffolding around dead code:
+   - dead_export → delete the symbol and any tests for it
+   - unused_internal → delete the symbol
+   - duplicate (intra-repo) → keep one, replace callers of the other, delete the duplicate
+   - wrapper / passthrough → inline at the call site
+   - stale (commented-out blocks ≥ 10 lines, ancient TODOs) → delete
+   - unused_config → remove the config key from defaults and validation
+   - unused_dep → remove from pyproject.toml / package.json / Cargo.toml and lockfile
+   Skip (leave for human): parallel_impl (needs design decision), scope_creep (needs spec discussion), cross-repo duplicates (needs shared-lib coordination)
+2. NAMING FIXES (D2) — Rename files/symbols to match conventions
+3. VERSION FIXES (D3) — Update version strings for consistency
+4. STRUCTURE FIXES (D8) — Create missing directories/files with stubs
+5. DOC FIXES (D4) — Add missing README sections, fix CHANGELOG format
 
 After all fixes:
 - Run the full test suite (detect language: pytest | npx vitest run | go test ./... | cargo test | mvn test | gradle test | dotnet test | swift test | vendor/bin/phpunit | mix test)
@@ -492,9 +646,10 @@ FIXES_REVERTED: {count}
 TEST_RESULT: {pass|fail|skipped}
 TEST_COUNTS: {passed}/{total}
 CHANGES:
-- dimension: {D2|D3|D4|D8}
+- dimension: {D2|D3|D4|D8|D9}
   file: {path}
   action: {what was changed}
+LOC_REMOVED_BY_BLOAT_FIXES: {N}
 ```
 
 Wait for all repo fix sub-agents to complete.

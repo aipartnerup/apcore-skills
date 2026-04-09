@@ -9,6 +9,18 @@ description: >
 
 # Apcore Skills — SDK
 
+## ⚡ Execution Entry Point (READ THIS FIRST)
+
+**When this skill is loaded, you MUST immediately begin executing the Workflow below — do not wait, do not summarize, do not ask "what should I do now". Skills are operational manuals, not reference documents.** Read the first executable step, perform it, then the next, etc., until the workflow completes or you reach an `AskUserQuestion` checkpoint.
+
+If the harness shows you `Successfully loaded skill · N tools allowed`, that message means **the SKILL.md content was injected into your context** — it does NOT mean the skill has run. Skills do not "run" autonomously; you run them by executing the Detailed Steps below.
+
+If you find yourself about to say "the skill didn't produce output", "skill 仍未输出", "falling back to manual SDK bootstrap", "回退到手动 SDK", or anything similar, **STOP**. You have misunderstood how skills work. Go directly to the first executable step and start.
+
+The first user-visible action of this skill should be either (a) the output of the first step, or (b) an `AskUserQuestion` if the first step needs disambiguation. Never an apology, never a fallback, never silence.
+
+---
+
 Bootstrap a new apcore project in a new language. The project type is auto-discovered from the reference implementation — no hardcoded type list.
 
 ## Iron Law
