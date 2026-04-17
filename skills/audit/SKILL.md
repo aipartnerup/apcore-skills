@@ -48,19 +48,20 @@ Comprehensive consistency audit across all apcore ecosystem repositories.
 
 ## Audit Dimensions
 
-The audit covers 9 dimensions, each checking specific aspects:
+The audit covers 10 dimensions, each checking specific aspects:
 
 | # | Dimension | Severity Range | Description |
 |---|---|---|---|
 | D1 | API Surface | critical-warning | Public API alignment across languages |
 | D2 | Naming Conventions | critical-warning | File/class/function naming per language rules |
 | D3 | Version Sync | critical-info | Version alignment within sync groups |
-| D4 | Documentation | warning-info | README, CHANGELOG, docstring completeness |
+| D4 | Documentation | warning-info | README, CHANGELOG, docstring, **spec `## Contract:` coverage** |
 | D5 | Test Coverage | warning-info | Test file existence and coverage metrics |
 | D6 | Dependencies | critical-warning | Dependency versions and compatibility |
 | D7 | Configuration | warning-info | APCORE_* settings consistency across integrations |
 | D8 | Project Structure | warning-info | File/directory layout per conventions |
 | D9 | **Bloat & Redundancy** | **critical-info** | **Dead exports, duplicate symbols, parallel implementations, LOC growth, unused config, scope creep** |
+| D10 | **Contract Parity (Intent)** | **critical-warning** | **Behavioral contract parity — inputs validation, errors raised, side-effect order, return shape, async/thread-safe/pure/idempotent/reentrant properties — catches "same signature, different logic" bugs** |
 
 ## Severity Levels
 
@@ -77,12 +78,12 @@ The audit covers 9 dimensions, each checking specific aspects:
 2. Aggregation — collecting structured findings from all sub-agents
 3. Reporting — formatting and displaying the consolidated report
 
-Step 2 spawns **up to 9 parallel sub-agents** (one per dimension, all simultaneously). Step 4 spawns **one parallel sub-agent per repo** for fixes. The main context never reads repo files directly.
+Step 2 spawns **up to 10 parallel sub-agents** (one per dimension, all simultaneously). Step 4 spawns **one parallel sub-agent per repo** for fixes. The main context never reads repo files directly.
 
 ## Workflow
 
 ```
-Step 0 (ecosystem) → Step 1 (parse args) → Step 2 (parallel audits) → Step 3 (report) → [Step 4 (fix)]
+Step 0 (ecosystem) → Step 1 (parse args) → Step 2 (parallel audits) → Step 3 (report) → Step 3.1 (review-compatible output) → [Step 4 (fix)]
 ```
 
 ## Detailed Steps
@@ -102,9 +103,9 @@ Parse `$ARGUMENTS` for flags.
 **If `--scope` is NOT specified:**
 1. Detect CWD repo name (basename of CWD)
 2. Look up in discovered ecosystem:
-   - `core-sdk` repo → audit only this repo, dimensions D1-D3, D5-D6, D8-D9
-   - `mcp-bridge` repo → audit only this repo, dimensions D1-D3, D5-D6, D8-D9
-   - `integration` repo → audit only this repo, dimensions D2-D9
+   - `core-sdk` repo → audit this repo + sibling core-sdks in the same sync group, dimensions D1-D3, D5-D6, D8-D10 (D10 needs ≥2 repos in the same group to compare)
+   - `mcp-bridge` repo → audit this repo + sibling mcp-bridges, dimensions D1-D3, D5-D6, D8-D10
+   - `integration` repo → audit only this repo, dimensions D2-D9 (D10 skipped — integrations have no cross-language peers)
    - `protocol`/`docs-site` repo → audit documentation dimensions (D4) and bloat (D9) for this repo
    - `shared-lib`/`tooling` repo → audit D2 (naming), D4 (docs), D5 (tests), D8 (structure), D9 (bloat) for this repo
    - CWD not an apcore repo → use `AskUserQuestion` to ask: "CWD is not an apcore repo. Which repo do you want to audit?" with options from `repos[]` names + "All repos (full ecosystem audit)"
@@ -116,12 +117,14 @@ Parse `$ARGUMENTS` for flags.
 
 | Scope | Repos | Dimensions |
 |---|---|---|
-| `core` | Core SDKs | D1-D3, D5-D6, D8-D9 |
-| `mcp` | MCP bridges | D1-D3, D5-D6, D8-D9 |
-| `integrations` | Framework integrations | D2-D9 (no cross-API sync) |
+| `core` | Core SDKs + `apcore/` doc repo | D1-D3, D5-D6, D8-D10 (D4 covers `apcore/` only) |
+| `mcp` | MCP bridges + `apcore-mcp/` doc repo | D1-D3, D5-D6, D8-D10 (D4 covers `apcore-mcp/` only) |
+| `integrations` | Framework integrations | D2-D9 (no cross-API sync; D10 only if ≥2 peers) |
 | `all` | All repos | All dimensions |
 
 **D9 (Bloat & Redundancy) is always included.** It applies to every scope and every repo type — it is the apcore ecosystem's primary defense against the additive bias of skill-driven feature work.
+
+**D10 (Contract Parity) is included whenever ≥2 same-type repos are in scope.** It is the primary defense against intent divergence — the bug class where public signatures match but logic/purpose differs (e.g., one SDK validates inputs and the other doesn't; one emits an event and the other doesn't; one is thread-safe and the other isn't). When scope has only 1 repo of a given type, D10 is skipped with an INFO finding.
 
 Display:
 ```
@@ -134,9 +137,9 @@ Dimensions: {list}
 
 ### Step 2: Execute Audit Dimensions (Sub-agents)
 
-Spawn **all dimension sub-agents in parallel (up to 9 simultaneously)**. Each sub-agent audits exactly 1 dimension. All dimensions are fully independent — no batching or serialization needed.
+Spawn **all dimension sub-agents in parallel (up to 10 simultaneously)**. Each sub-agent audits exactly 1 dimension. All dimensions are fully independent — no batching or serialization needed.
 
-**Sub-agent prompts:** Use the dimension-specific prompt templates from `@references/dimension-prompts.md`. Each dimension (D1–D9) has its own section with the full prompt template. Fill in `{repo_paths}` (and `{integration_repo_paths}` for D7) from the scope determined in Step 1.
+**Sub-agent prompts:** Use the dimension-specific prompt templates from `@references/dimension-prompts.md`. Each dimension (D1–D10) has its own section with the full prompt template. Fill in `{repo_paths}` (and `{integration_repo_paths}` for D7, `{doc_repo_path}` for D10) from the scope determined in Step 1.
 
 ---
 
@@ -163,8 +166,9 @@ Repos audited: {count}
   D7 Configuration       |    0     |    3    |   1
   D8 Project Structure   |    0     |    1    |   2
   D9 Bloat & Redundancy  |    1     |    8    |   5
+  D10 Contract Parity    |    3     |    4    |   2
   ─────────────────────────────────────────────────
-  TOTAL                  |    5     |   25    |  18
+  TOTAL                  |    8     |   29    |  20
 
 ═══ CRITICAL FINDINGS ═══
 
@@ -200,6 +204,24 @@ Repos audited: {count}
     2. apcore-python: parallel HTTP client implementations — see [D9-014]
     3. django-apcore: scope creep in user-auth feature (+3 unplanned files)
 
+═══ CONTRACT PARITY REPORT (D10) ═══
+
+  Symbols compared: {N}
+  Fully matching: {N}
+  With divergence: {N}
+
+  Top divergences (act on these first):
+    1. Registry.register — TS missing DuplicateError raise [D10-001]
+    2. Executor.execute — Go skips input validation present in Python/Rust [D10-002]
+    3. Config.load — Python thread_safe=true, TS thread_safe=false [D10-003]
+
+  Contract rows with divergence (summary):
+    inputs.validation:    {N}
+    errors.raised:        {N}
+    side_effect.order:    {N}
+    return.shape:         {N}
+    property.*:           {N}
+
 ═══ HEALTH SCORE ═══
 
   Overall: {score}/100
@@ -210,11 +232,125 @@ Repos audited: {count}
   Test Coverage: {score}/100
   Dependencies: {score}/100
   Leanness (D9):     {score}/100
+  Contract Parity (D10): {score}/100
 ```
 
 **Leanness score formula:** Start at 100. Subtract 5 per `critical` D9 finding, 2 per `warning`, 0.5 per `info`. Floor at 0. A leanness score below 70 indicates the repo needs a dedicated cleanup pass before the next release.
 
+**Contract Parity score formula:** Start at 100. Subtract 8 per `critical` D10 finding (intent divergence is a severe bug class), 3 per `warning`, 0.5 per `info`. Floor at 0. A contract parity score below 80 means at least one implementation is silently doing something different from its peers — must be fixed before release.
+
 If `--save` flag: write full report to specified path.
+
+---
+
+### Step 3.1: Review-Compatible Issue Report (ALWAYS EMITTED)
+
+**After the consolidated report, ALWAYS append a review-compatible report so that `/code-forge:fix --review` can directly consume audit output.**
+
+Convert all CRITICAL and WARNING findings across dimensions D1–D10 into `code-forge:review` format. Format matches `code-forge:review` output schema and mirrors sync's Step 9.1 so that a single downstream consumer can ingest either skill's output.
+
+Use the `# Project Review:` header with a dynamic scope description (derived from Step 1 — e.g., repo name, scope group, or "all"). Output the review-compatible report as **raw markdown** (not inside a fenced code block) so that code-forge:fix can parse it from the conversation context.
+
+```markdown
+# Project Review: {scope_description}
+
+## Consistency
+
+{For each finding from D1–D10 with severity critical or warning, emit one issue entry:}
+
+- severity: <blocker | critical | warning>
+  file: {target file path — the file that needs to be fixed}
+  line: {line number or range, use 1 if unknown}
+  title: [{dimension_id}-{finding_id}] {short title}
+  description: {what is inconsistent and why it matters — include cross-reference to spec or peer repo}
+  suggestion: {concrete fix instruction — what to change, what to match against}
+```
+
+**Severity mapping from audit findings to review format:**
+
+| Dimension | Audit Severity | Review Severity | Notes |
+|---|---|---|---|
+| D1 | critical | blocker | Missing API symbol from a peer repo |
+| D1 | critical | critical | Signature mismatch (param count, type) |
+| D1 | warning | warning | Wrapper param count mismatch, naming divergence within signature |
+| D2 | critical | critical | Public symbol violates language naming convention |
+| D2 | warning | warning | Non-public or cosmetic naming issue |
+| D3 | critical | blocker | Version mismatch within sync group before release |
+| D3 | warning | warning | Version file inconsistency within a repo |
+| D4 | warning | warning | Spec lacks `## Contract:` block for a public symbol; README section missing |
+| D4 | info | _(skip)_ | Minor docstring gaps |
+| D5 | critical | critical | Tests fail |
+| D5 | warning | warning | Test runner unavailable / deps missing |
+| D6 | critical | blocker | Incompatible SDK version referenced |
+| D6 | warning | warning | Unused / mismatched dependency |
+| D7 | warning | warning | APCORE_* setting divergence across integrations |
+| D8 | warning | warning | Project structure deviation |
+| D9 | critical | critical | Parallel implementation / duplicate code / stub no-op method with spec-declared behavior |
+| D9 | warning | warning | Dead export / unused internal / wrapper / scope creep |
+| **D10** | **critical** | **blocker** | **Missing input validation or missing raised error type** — users hit silent bugs |
+| **D10** | **critical** | **critical** | **Side-effect order divergence, return shape divergence, thread_safe/async property divergence** |
+| **D10** | **warning** | **warning** | **Spec silent on Contract (cross-repo-only mode); extraction limit (null vs true/false); extra error raised beyond spec** |
+| any | info | _(skip)_ | info-level findings are not actionable bugs |
+
+**Rules:**
+- Group issues by file for efficient batch fixing
+- The `file` field MUST point to the **implementation or doc file that needs changing**. For D10 cross-repo findings where spec is silent, the `file` is the implementation file of the **outlier repo** (the one that diverges from the majority or from the most-reference repo `apcore-python`). For spec-authoritative D10 findings, every non-matching repo emits its own issue entry (one per repo).
+- The `suggestion` field MUST be concrete — e.g., "Add `if not RE_ID.match(id): raise InvalidIdError(code=INVALID_ID)` at line {L}, before the existing `self._index[id] = module` assignment" rather than "fix validation".
+- For D10 intent divergences, include the correct contract row from `spec_contracts` (or from the non-outlier repo, if spec silent) directly in the suggestion.
+- For D4 spec-contract-missing findings, the `file` is the feature spec that needs the `## Contract:` block added; the `suggestion` includes a ready-to-paste Contract skeleton using `shared/contract-spec.md` format.
+
+**Example output:**
+
+```markdown
+# Project Review: apcore core (full ecosystem audit)
+
+## Consistency
+
+- severity: blocker
+  file: apcore-go/src/registry.go
+  line: 42
+  title: [D10-001] Contract — Registry.register missing DuplicateError raise
+  description: Spec contract (apcore/docs/features/registry.md §Contract.Registry.register) declares error `DuplicateError(code=DUPLICATE)` when id is already registered and overwrite=false. apcore-python and apcore-typescript raise it; apcore-go silently overwrites. Intent divergence — user deduplication semantics break on Go.
+  suggestion: Add before line 42 (before the index insert): `if _, exists := r.index[id]; exists && !overwrite { return ErrDuplicate(id) }`. Ensure ErrDuplicate resolves to error code "DUPLICATE".
+
+- severity: critical
+  file: apcore-typescript/src/executor.ts
+  line: 87
+  title: [D10-003] Contract — Executor.execute thread_safe divergence
+  description: apcore-python and apcore-rust declare and implement `thread_safe=true` for Executor.execute (internal lock acquired before mutating shared state). apcore-typescript has no lock / concurrent-safe wrapper — two parallel calls can interleave writes. Spec `## Properties: thread_safe: true` is not satisfied.
+  suggestion: Wrap the mutating section (lines 90-105) in a lock — use the existing `this._mu` mutex. Match apcore-python/src/apcore/executor.py:44-62 pattern.
+
+- severity: warning
+  file: apcore/docs/features/config.md
+  line: 1
+  title: [D4-007] Spec — Config.load missing ## Contract: block
+  description: Feature spec declares Config.load as a public method but has no `## Contract:` block. Intent parity across language SDKs cannot be verified against spec — D10 fell back to cross-repo-only mode for this method.
+  suggestion: Add a Contract block per shared/contract-spec.md. Template:
+    ```
+    ## Contract: Config.load
+    ### Inputs
+    - path: str, required, validates[exists], reject_with=FileNotFoundError
+    ### Errors
+    - FileNotFoundError(code=CONFIG_NOT_FOUND) — path does not exist
+    - InvalidConfigError(code=CONFIG_INVALID) — path exists but cannot be parsed
+    ### Returns
+    - On success: Config
+    - On failure: raises
+    ### Properties
+    - async: false
+    - thread_safe: true
+    ```
+```
+
+If no CRITICAL or WARNING findings exist, still output the header with a note:
+
+```markdown
+# Project Review: {scope_description}
+
+## Consistency
+
+_(No actionable issues found — all checks passed.)_
+```
 
 ---
 
@@ -224,6 +360,7 @@ Group fixable findings by repo. Separate unfixable findings for reporting.
 
 **Unfixable (skip and report):**
 - API surface fixes (complex — delegate to `/apcore-skills:sync --phase a --fix`)
+- Contract parity fixes (D10 — delegate to `/apcore-skills:sync --internal-check=contract --fix`, or pipe the review-compatible output from Step 3.1 to `/code-forge:fix --review`)
 - Dependency fixes (risky — show as recommendations only)
 
 **Fixable (per-repo parallel sub-agents):**

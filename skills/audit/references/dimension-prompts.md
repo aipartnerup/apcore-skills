@@ -130,6 +130,10 @@ For each repo check:
 5. Public API methods have parameter documentation
 6. Examples directory exists (for integrations)
 
+For documentation repos (apcore/, apcore-mcp/) additionally check:
+7. **Contract coverage in feature specs**. For each `docs/features/*.md` file, identify every public class/function/method declared (by header pattern `## Class:`, `## Function:`, or API reference table). For each declared public symbol, check that a `## Contract:` block exists per `shared/contract-spec.md`. A Contract block MUST contain: `### Inputs`, `### Errors`, `### Returns`, `### Properties`. If a public symbol has no Contract block, report as WARNING with detail "feature spec {file} declares {Symbol} but has no ## Contract: block — intent parity cannot be verified". If a Contract block exists but is missing required fields, report as INFO.
+8. **Algorithm section coverage** (optional — INFO only). Feature specs MAY have `## Algorithm:` blocks for methods that have complex internal sequences. Not required, but missing Algorithm prevents skeleton-tier sync. Report as INFO only.
+
 Error handling: If a repo path does not exist, skip it and report as info finding.
 
 Return findings in this exact format:
@@ -138,6 +142,7 @@ FINDING_COUNT: {N}
 FINDINGS:
 - severity: {critical|warning|info}
   repo: {repo-name}
+  category: {readme|changelog|license|docstrings|contract_coverage|algorithm_coverage|...}
   detail: {description}
   location: {file if applicable}
   fix: {suggested fix}
@@ -420,4 +425,134 @@ BLOAT_SUMMARY:
   unused_deps: {N}
   scope_creep_files: {N}
   stub_noops: {N}
+```
+
+---
+
+## D10 — Contract Parity (Intent / Logic Consistency)
+
+```
+Audit behavioral-contract parity across apcore SDK implementations of the same type.
+
+Repos to compare: {repo_paths}
+Doc repo (spec authority): {doc_repo_path} — may be empty for integration-only audits
+
+This dimension catches the bug class "public signatures match but logic/intent differs".
+It does NOT check helper-name parity (that is explicitly out of scope — see sync Anti-Rationalization Table).
+It DOES check that every SDK agrees on: input validation rules, errors raised and their codes,
+side-effect order, return shape, and behavioral properties (async, thread-safe, pure, idempotent, reentrant).
+
+Read `shared/contract-spec.md` for the authoritative Contract block format.
+Read `shared/api-extraction.md` Step E.4b for the per-method contract extraction protocol.
+
+=== Step 1: Load spec Contracts (if doc repo provided) ===
+
+For each `docs/features/*.md` in {doc_repo_path}:
+1. Find every `## Contract: ClassName.method_name` block
+2. Parse `### Inputs`, `### Preconditions`, `### Side Effects`, `### Postconditions`, `### Errors`, `### Returns`, `### Properties`
+3. Store as spec_contracts[symbol]
+
+If {doc_repo_path} is empty OR no Contract blocks found, enter cross-repo-only mode (compare repos
+against each other without spec authority — any divergence is still a bug).
+
+=== Step 2: Extract per-repo contracts ===
+
+For each repo in {repo_paths}:
+1. Identify the main export file (__init__.py / index.ts / lib.rs / mod.rs)
+2. For each public class and every public method on it, AND for each top-level public function:
+   a. Extract inputs validations — scan the first N non-comment lines (or every line before the
+      first mutating call / I/O call, whichever is shorter) for guard clauses like
+      `if <cond>: raise E` / `if (<cond>) throw new E(...)` / `if <cond> { return Err(E) }`.
+      Record `[{param, condition, reject_with}]`.
+   b. Extract errors_raised — grep the entire method body for `raise X`, `throw new X`,
+      `return Err(X)`, `return ..., errX`, `?` operator on `Result<_, X>`. Deduplicate.
+      Resolve error codes where statically possible (find the error class definition, extract
+      its code field / constant).
+   c. Extract side_effects (ordered) — detect lock acquire/release, emit/publish calls, index
+      mutations, I/O writes, self/this field assignments. Normalize each to a short snake_case
+      descriptor. Return in source order.
+   d. Extract return_shape — None/void/unit, literal, ConstructedType(...), raises, mixed.
+   e. Extract properties — async (from signature), thread_safe (lock usage + mutation),
+      pure (no mutations + no I/O + no argument mutation), idempotent (null unless obvious),
+      reentrant (null unless obvious).
+3. Store per repo as repo_contracts[repo_name][symbol]
+
+=== Step 3: Compare ===
+
+For every (symbol) that appears in spec_contracts OR in more than one repo_contracts:
+
+1. Inputs validation parity:
+   - Spec-declared: every repo must have matching {condition, reject_with} for each spec input.
+     Missing validation → CRITICAL. Wrong error type → CRITICAL.
+   - Spec silent: cross-repo. Any repo rejecting an input that another repo doesn't → CRITICAL.
+
+2. Errors raised parity:
+   - Spec-declared: set of error types must equal spec's ### Errors. Extra → WARNING. Missing → CRITICAL. Wrong code → CRITICAL.
+   - Spec silent: set equality across repos. Any divergence → CRITICAL.
+
+3. Side-effect order parity:
+   - Spec-declared: LCS diff between spec order and each repo. Missing → CRITICAL. Reordered → CRITICAL. Extra → WARNING.
+   - Spec silent: cross-repo order. Divergence → CRITICAL.
+
+4. Return shape parity:
+   - Mismatch with spec → CRITICAL. Cross-repo divergence when spec silent → CRITICAL.
+
+5. Properties parity:
+   - true-vs-false mismatch → CRITICAL.
+   - null-vs-true/false → WARNING (extraction limit).
+   - All-null → skip.
+
+6. Cross-check with ## Algorithm (if Contract AND Algorithm both exist for the symbol):
+   - Side-effect order in Contract should correspond to checkpoint order in Algorithm.
+   - Mismatch → WARNING at the spec level (spec is internally inconsistent).
+
+Severity guidance:
+- critical: intent divergence — implementation will produce different observable outcomes for the same input
+- warning: spec is silent / extraction cannot determine / extra behavior that may be a language-specific enhancement
+- info: cosmetic divergence (condition phrasing differs but error type matches)
+
+Error handling:
+- If a repo path does not exist, skip it and report as INFO finding "Repo not found at {path}"
+- If a method's body cannot be statically analyzed (e.g., defined via macro/codegen), report WARNING "Method {M} in repo {R} not statically analyzable — contract extraction skipped"
+- If NO repos have extractable contracts (all methods too dynamic), report INFO "Contract parity check yielded no comparisons"
+- Do NOT fail the entire audit if one repo's extraction fails
+
+Return findings in this exact format:
+DIMENSION: D10 — Contract Parity
+FINDING_COUNT: {N}
+FINDINGS:
+- severity: {critical|warning|info}
+  repo: {repo-name-of-outlier}   # for spec-silent findings, the outlier repo
+  symbol: {ClassName.method_name}
+  category: {inputs_validation|errors_raised|side_effect_order|return_shape|property_mismatch|spec_silent|algorithm_contract_mismatch}
+  detail: {what specifically differs}
+  spec_says: {spec value, or "(not declared)" if spec is silent}
+  repos_disagree:
+    {repo-1}: {value}
+    {repo-2}: {value}
+  location: {file:line in the outlier repo that needs changing}
+  fix: {concrete change instruction — e.g., "Add `if not RE.match(id): raise InvalidIdError(code=INVALID_ID)` before existing validation"}
+
+CONTRACT_MATRIX:
+- symbol: {ClassName.method_name}
+  spec_contract_present: true|false
+  repos_compared: [{repo-1}, {repo-2}, ...]
+  rows:
+    - row: inputs.{param}.validation
+      spec: {value or "—"}
+      {repo-1}: {value}
+      {repo-2}: {value}
+      status: PASS|FAIL|WARN
+    - row: inputs.{param}.reject_with
+      ...
+    - row: errors.{ErrorType}
+      ...
+    - row: side_effect[{N}] {effect_name}
+      ...
+    - row: return.on_success
+      ...
+    - row: property.{async|thread_safe|pure|idempotent|reentrant}
+      ...
+
+Target output size: keep CONTRACT_MATRIX to at most 30 symbols (the ones with at least one divergence); summarize fully-passing symbols as a count "N symbols fully match, not listed".
 ```

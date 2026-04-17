@@ -28,6 +28,7 @@ Follow the API Extraction Protocol:
    - **Trait/interface implementations**: for each public class, the list of trait/interface contracts it satisfies (e.g., Rust `impl Display for Registry`, Python `class Registry(Hashable)`, Go `func (r *Registry) String() string`, TS `class Registry implements Serializable`). Use the equivalence table in Step 4.2 item 4 to recognize idiomatic forms.
    - **Multi-constructor patterns**: for each public class, the list of all construction paths (Rust `impl Self { fn new; fn with_…; fn from_… }`; Python `__init__` + every `@classmethod` factory; Go every `NewX*` function in the same package; TS constructor + static factories). Return as `constructors: [{name, params, return_type}, ...]`.
    - **Algorithm checkpoint markers**: for each public method body, grep for `checkpoint:[a-z_][a-z0-9_]*` literal strings (in `logger.debug` / `tracing::debug!` / `slog.Debug` / `span.AddEvent` / `tracer.startSpan` calls). Return them in source order as a `skeleton` field on each method object: `methods: [{name: "...", skeleton: [checkpoint_1, checkpoint_2, ...]}]`. Top-level functions get a sibling `skeleton` field. Do NOT invent — only report literally found markers. If none found for a method, return an empty list (`skeleton: []`).
+   - **Behavioral contract (MANDATORY)**: for every public method and every top-level function, extract a `contract` object per the rules in `shared/api-extraction.md` Step E.4b. This captures the method's *intent* (inputs validation, errors raised, side effects, return shape, behavioral properties) as statically observable from source. It is not gated on any flag and MUST be returned for every method, regardless of whether the spec declares a `## Contract` block. See `shared/contract-spec.md` for field semantics.
 
 Return a structured summary in this exact format:
 
@@ -44,6 +45,14 @@ CLASSES:
   methods:
     - {method_name}({params}) -> {return_type} [async]
       skeleton: [checkpoint_1, checkpoint_2, ...]
+      contract:
+        inputs:
+          - {param}: {type}, {required|optional}[, default={val}], validates[{cond}], reject_with={ErrorType}
+          - ...
+        errors_raised: [{ErrorType}({code}), ...]
+        side_effects: [{effect_1}, {effect_2}, ...]
+        return_shape: {None|literal|ConstructedType|raises|mixed}
+        properties: { async: {bool}, thread_safe: {bool|null}, pure: {bool}, idempotent: {bool|null}, reentrant: {bool|null} }
     - ...
   trait_impls:
     - {ContractName}  (e.g., Display, Clone, Serialize, Iterator)
@@ -51,6 +60,12 @@ CLASSES:
 FUNCTIONS:
 - {function_name}({params}) -> {return_type} [async]
   skeleton: [checkpoint_1, checkpoint_2, ...]
+  contract:
+    inputs: [...]
+    errors_raised: [...]
+    side_effects: [...]
+    return_shape: ...
+    properties: { ... }
 
 ENUMS:
 - {EnumName}: {MEMBER1}={value1}, {MEMBER2}={value2}, ...

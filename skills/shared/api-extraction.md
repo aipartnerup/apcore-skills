@@ -271,6 +271,117 @@ For each public method body, extract the ordered list of `checkpoint:NAME` marke
 
 This pairs with Step 4A in `skills/sync/SKILL.md`.
 
+**Step E.4b: Contract Extraction (Intent Parity)**
+
+Extract the **behavioral contract** of every public method from source. This is the input for sync's Step 4B (contract tier — DEFAULT ON) and audit's D10 (Contract Parity) dimension. It captures *what* the method does — not *how* — so that cross-language divergence in logic/intent can be detected even when the Contract spec section is missing (degraded mode) or present (full parity check).
+
+See `shared/contract-spec.md` for the authoritative Contract block format and semantics. The extraction must produce a structured record for every public method, regardless of whether the spec declares a Contract — if the spec is silent, the extracted record is still useful for cross-implementation comparison (detect divergence even when spec is incomplete).
+
+For each public method, extract and return the following `contract` object:
+
+```json
+{
+  "method": "Registry.register",
+  "contract": {
+    "inputs": [
+      {
+        "name": "id",
+        "type": "str",
+        "required": true,
+        "default": null,
+        "validations": [
+          {"condition": "matches pattern ^[a-z][a-z0-9_]*$", "reject_with": "InvalidIdError"}
+        ]
+      },
+      {"name": "module", "type": "Module", "required": true, "default": null,
+       "validations": [{"condition": "isinstance(module, Module)", "reject_with": "TypeError"}]}
+    ],
+    "errors_raised": [
+      {"type": "InvalidIdError", "code": "INVALID_ID"},
+      {"type": "DuplicateError", "code": "DUPLICATE"},
+      {"type": "DependencyError", "code": "DEPENDENCY_MISSING"}
+    ],
+    "side_effects": [
+      "acquire_write_lock",
+      "validate_inputs",
+      "resolve_dependencies",
+      "insert_into_index",
+      "emit_registered_event",
+      "release_write_lock"
+    ],
+    "return_shape": {"on_success": "None", "on_failure": "raises"},
+    "properties": {
+      "async": false,
+      "thread_safe": true,
+      "pure": false,
+      "idempotent": null,
+      "reentrant": null
+    }
+  }
+}
+```
+
+**Extraction rules by field:**
+
+1. **`inputs[].validations[]`** — scan the first ~20 non-comment lines of the method body (OR every line before the first mutating call / I/O call, whichever is shorter). Collect every guard clause of the form `if <condition>: raise X` / `if <cond> { throw X }` / `if <cond> { return Err(X) }`. Record each as `{condition: human-readable, reject_with: ErrorTypeName}`. The `condition` field is the literal source text of the condition (or a concise normalization — keep it short, max 120 chars).
+
+2. **`errors_raised[]`** — grep the entire method body for error-raising patterns in the target language:
+   - Python: `raise X(...)`, `raise X` — extract X
+   - TypeScript: `throw new X(...)`, `throw X` — extract X
+   - Go: `return ..., X` where X is an error value / `return ..., fmt.Errorf(...)` — extract X or the `Err*` sentinel name
+   - Rust: `return Err(X)`, `Err(X)?`, `?` on a `Result<_, X>` — extract X
+   - Java: `throw new X(...)` — extract X
+
+   Deduplicate. For each, attempt to resolve the error code constant (grep the error class definition for a `code = "..."` / `const code` / derive macro parameter). Record as `{type, code}`. If code cannot be statically resolved, record `{type, code: null}`.
+
+3. **`side_effects[]`** — in source order, collect calls matching these observable-effect patterns:
+   - Lock acquisition: `lock.acquire()`, `mu.Lock()`, `self.lock.lock()`, `with self._lock:`, `Arc::clone`'s owned mutations
+   - Lock release: `lock.release()`, `mu.Unlock()`, end of `with` block
+   - Event emission: `emit(`, `publish(`, `dispatch(`, `notify(`
+   - Index / storage mutation: `self._index[...] = ...`, `this.index.set(`, `m[k] = v`, `index.insert(`
+   - I/O: `open(`, `write(`, `fs.writeFile(`, `io.Write(`, `sqlx::query!`, `http.Post(`
+   - Self-state mutation: `self.x = ...` / `this.x = ...` / `s.x = ...` (Rust/Go with `&mut self`)
+
+   Normalize each to a short snake_case descriptor (e.g., `acquire_write_lock`, `emit_registered_event`, `insert_into_index`). Return in source order. If a side effect occurs inside a branch, still record it at its textual position (same rule as checkpoint extraction).
+
+4. **`return_shape`** — look at every `return` / implicit-return expression reachable without an error. Classify:
+   - `None` / `void` / `()` / `unit`
+   - `<literal>` (primitive literal)
+   - `<type_constructor>(...)` (constructed object — record the type)
+   - `raises` (method always throws — never returns)
+   - `mixed` (multiple different shapes — flag as concern)
+
+5. **`properties`**:
+   - `async` — true iff signature declares async / returns Promise / returns `impl Future`
+   - `thread_safe` — true iff method body (or a wrapping decorator / with-block) acquires a lock before any state mutation, OR method is pure, OR method operates only on stack-local data. Otherwise false. If ambiguous, return `null`.
+   - `pure` — true iff no self/this writes, no external I/O, no argument mutation. Otherwise false.
+   - `idempotent` — return `null` (cannot be inferred statically in general). Exception: if the method body is literally `if X in self._set: return; self._set.add(X)` or equivalent obvious dedup pattern, return true.
+   - `reentrant` — return `null` (cannot be inferred statically without reachability analysis).
+
+**Structural sub-agent output.** In the API summary returned by each repo's sub-agent (see sync `references/extract-api-prompt.md`), add a `CONTRACT:` sub-block for every method inside every class, and for every top-level function:
+
+```
+CLASSES:
+- Registry
+  methods:
+    - register(id: str, module: Module) -> None
+      skeleton: [...]
+      contract:
+        inputs:
+          - id: str, required, validates[match_pattern], reject_with=InvalidIdError
+          - module: Module, required, validates[isinstance], reject_with=TypeError
+        errors_raised: [InvalidIdError(INVALID_ID), DuplicateError(DUPLICATE), DependencyError(DEPENDENCY_MISSING)]
+        side_effects: [acquire_write_lock, validate_inputs, resolve_dependencies, insert_into_index, emit_registered_event, release_write_lock]
+        return_shape: None
+        properties: { async: false, thread_safe: true, pure: false, idempotent: null, reentrant: null }
+```
+
+**Rules:**
+1. **Mandatory for every public method** — unlike skeleton, contract extraction is not gated on any flag or spec declaration. Every sub-agent MUST return a `contract` object per method.
+2. **Conservative inference** — if a field cannot be statically determined, return `null`. Never invent.
+3. **Degraded-mode usefulness** — even when the spec has no `## Contract` block, the extracted contract records from multiple repos can be cross-compared to surface divergence (e.g., Python raises `DuplicateError` but TS silently returns — surfaced as cross-repo finding even with no spec authority).
+4. **Budget** — keep the total `contract` block under ~500 bytes per method to stay within sub-agent output limits.
+
 **Step E.5: Extraction Verification**
 
 After extraction, verify completeness before proceeding to comparison:

@@ -56,7 +56,8 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | "Doc examples are just illustrative" | If a code example calls a non-existent method or passes the wrong number of args, a user copying it will get a compile/runtime error. Doc examples ARE the onboarding API — treat them as code. |
 | "Deprecated APIs in docs are just stale" | If CHANGELOG says an API was removed in v0.18.0 but docs still reference it, users following the docs will hit errors on the current version. Cross-check CHANGELOG Removed sections against doc examples. |
 | "PRD is product-level, no need to check against code" | If the PRD says a feature exists but no implementation matches, that is a gap. Every layer must agree. |
-| "Internal helpers should also be 1-to-1 across languages" | NO. Function-level identity conflicts with each language's design (Rust ownership splits, Go's no-default-args, Python list comprehensions). Internal consistency CAN be enforced at the SKELETON level (algorithm checkpoint sequence — opt in via `--internal-check=skeleton`) and the BEHAVIOR level (delegated to `tester` — opt in via `--internal-check=behavior`). Both are off by default; helper-name parity is never enforced at any tier. |
+| "Internal helpers should also be 1-to-1 across languages" | NO. Function-level identity (helper names, decomposition, line count) conflicts with each language's design (Rust ownership splits, Go's no-default-args, Python list comprehensions). **BUT** intent / logic / purpose MUST be identical across languages — that is enforced by the CONTRACT tier (default ON, Step 4B), the SKELETON tier (opt-in, Step 4A — algorithm checkpoint sequence), and the BEHAVIOR tier (opt-in, Step 7.5 — runtime equivalence via `tester`). Helper-name parity is never enforced at any tier. |
+| "Same public signature means same intent" | NO. Two `register(id, module)` methods can share the same signature yet diverge in logic — one validates before mutating, another writes first and rolls back on error; one raises on duplicate, another silently overwrites; one is thread-safe, another races. These are intent-level bugs. The CONTRACT tier compares inputs validation rules, errors raised, side-effect order, return shape, and behavioral properties (async/thread-safe/pure/idempotent/reentrant) against the spec's `## Contract` block — or cross-repo when spec is silent. |
 | "Trait satisfaction is a Rust thing, skip it for other languages" | Every language has an equivalent: Python `__str__` / TS `toString()` / Go `String()` / Rust `impl Display`. The protocol spec defines required interface contracts; each language must satisfy them with its idiomatic mechanism. Build a dedicated checklist row. |
 | "Multiple constructors are language-specific sugar" | Rust's `Self::new()` / `Self::with_config()` / `Self::from_env()` corresponds to Python `classmethod` factories, TS static factories, Go `NewX` / `NewXFromY`. If the spec defines multiple construction paths, every language must expose all of them. Treat constructors as a list, not a single entry. |
 
@@ -82,16 +83,21 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | `--fix` | off | Auto-fix issues (naming, stubs, doc references) |
 | `--scope` | **cwd** | Which group: `core`, `mcp`, `all`. **If omitted and no positional repos, defaults to the current working directory's repo only.** Use `--scope all` to scan all repos. |
 | `--lang` | all discovered | Comma-separated list of languages to compare |
-| `--internal-check` | `none` | Internal consistency tier. `none` = public API only (default — safe for repos without checkpoint instrumentation). `skeleton` = also compare algorithm checkpoint sequences (Step 4A, static). `behavior` = additionally hand off to `tester` skill for runtime behavioral equivalence (Step 7.5). Function-level identity is intentionally NOT supported — see Anti-Rationalization Table. |
+| `--internal-check` | `contract` | Internal consistency tier. `none` = public API only. `contract` = **DEFAULT** — also compare behavioral contracts (inputs validation, errors raised, side-effect order, return shape, properties) via Step 4B, static. `skeleton` = contract + algorithm checkpoint sequences (Step 4A, static, requires source instrumentation). `behavior` = all static tiers + hand off to `tester` skill for runtime behavioral equivalence (Step 7.5, dynamic). Higher tiers include lower tiers. Function-level (helper) identity is intentionally NOT supported — see Anti-Rationalization Table. |
 | `--save` | off | Save report to file |
 
 ### Internal Consistency Tiers
 
+Each tier is **cumulative** — higher tiers include all lower tiers.
+
 | Tier | What is checked | How | Cost |
 |------|----------------|-----|------|
-| `none` (default) | Public API surface only (Step 4) | Static signature comparison | Low |
-| `skeleton` | Algorithm checkpoint sequence inside each public method | Static — grep `checkpoint:NAME` literal strings in source, compare ordered set against spec's `## Algorithm` section | Low |
-| `behavior` | Runtime behavioral equivalence — same input → same observable output across all SDKs | Dynamic — invokes `/apcore-skills:tester --mode run --category protocol` (Step 7.5) and merges results | High (runs tests) |
+| `none` | Public API surface only (Step 4) | Static signature comparison | Low |
+| `contract` (**default**) | Public API + **behavioral contract** per method: inputs validation, errors raised, side-effect order, return shape, properties (async, thread_safe, pure, idempotent, reentrant) | Static — sub-agents extract contract per `shared/api-extraction.md` E.4b; main context compares each row against spec `## Contract:` block (if present) and cross-repo (always) | Low — no new runtime cost |
+| `skeleton` | Contract tier + algorithm checkpoint sequence inside each public method | Static — grep `checkpoint:NAME` literal strings in source, compare ordered set against spec's `## Algorithm` section | Low — requires source instrumentation |
+| `behavior` | All static tiers + runtime behavioral equivalence — same input → same observable output across all SDKs | Dynamic — invokes `/apcore-skills:tester --mode run --category protocol` (Step 7.5) and merges results | High — runs tests |
+
+**Contract tier is the default** because it answers the question "do all SDKs agree on what the method DOES?" without requiring any source instrumentation or test execution. It captures intent (logic/purpose) divergence that pure signature comparison misses. See `shared/contract-spec.md` for the `## Contract:` block format.
 
 **Function-level identity (helper names / count / decomposition) is explicitly NOT a tier.** It conflicts with each language's design philosophy (Rust ownership splits, Go's no-default-args, Python list comprehensions) and produces noise rather than signal.
 
@@ -251,14 +257,20 @@ For each documentation repo in scope, read the authoritative specs:
 2. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions (classes, functions, parameters, return types, **trait/interface contracts**, **multi-constructor patterns**)
 3. If `{doc_repo_path}/docs/tech-design.md` (or `docs/tech-design/*.md`) exists — extract any internal interface contracts marked as normative. Tag them with `internal_contract: true` so Step 4A knows they apply to internal symbols, not just public API.
 4. From each feature spec, parse any `## Algorithm` section — extract the ordered checkpoint list for each public method. Store as `spec_skeletons[scope][symbol] = [checkpoint_1, checkpoint_2, ...]`. This is the input for Step 4A.
+4b. **From each feature spec, parse any `## Contract:` section** — extract the behavioral contract per `shared/contract-spec.md`. For each spec Contract block, capture `{inputs[], preconditions[], side_effects[], postconditions[], errors[], returns, properties{}}`. Store as `spec_contracts[scope][symbol] = {...}`. This is the input for Step 4B.
 5. If `{doc_repo_path}/docs/spec/type-mapping.md` exists — load cross-language type mappings
 
 **For `apcore-mcp/` (mcp scope):**
-1. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions and `## Algorithm` checkpoint sections
+1. Scan `{doc_repo_path}/docs/features/*.md` — extract per-feature API definitions, `## Algorithm` checkpoint sections, **and `## Contract:` behavioral contract sections**
 2. If `{doc_repo_path}/docs/tech-design.md` exists — extract internal interface contracts
 3. If a protocol or spec file exists — extract the API contract
 
-Store as `spec_api[scope]` (canonical API surface) and `spec_skeletons[scope][symbol]` (algorithm checkpoint sequences keyed first by scope, then by symbol). Both must be matched by implementations.
+Store as:
+- `spec_api[scope]` — canonical API surface (signatures)
+- `spec_skeletons[scope][symbol]` — algorithm checkpoint sequences
+- `spec_contracts[scope][symbol]` — behavioral contracts (inputs validation, errors, side effects, properties)
+
+All three must be matched by implementations. If a public method has no `## Contract:` block in any feature spec, Step 4B still runs — it compares across implementations (cross-repo mode) and emits a `warning` finding `"no spec Contract declared for {method} — compared across repos only"` pointing to the doc repo.
 
 **For all documentation repos:**
 
@@ -289,6 +301,11 @@ If a feature spec has no `## Algorithm` section for a given method, Step 4A skip
 @../shared/api-extraction.md
 
 Build an explicit per-symbol checklist and evaluate every single item. No shortcuts.
+
+Step 4 has three substeps that run in order:
+- **4.1–4.3** — signature / type / naming checklist (always runs)
+- **4A** — skeleton checkpoint comparison (runs only when `--internal-check` is `skeleton` or `behavior`)
+- **4B** — contract parity (runs by default — `--internal-check` is `contract`, `skeleton`, or `behavior`)
 
 #### 4.1 Build the Master Checklist
 
@@ -446,6 +463,80 @@ The literal prefix is `checkpoint:` followed by a snake_case identifier. Sub-age
 
 **Store as `phase_a_skeleton_results`** for inclusion in Step 5 and Step 9 reports.
 
+#### 4B: Contract Parity Check (DEFAULT — runs unless --internal-check=none)
+
+**Purpose:** verify that every public method's *intent* (inputs validation, errors raised, side effects, return shape, behavioral properties) agrees across all implementations and with the spec's `## Contract:` block (when declared). This is the primary defense against the bug class the user cares about: "signatures match but logic/intent differs".
+
+**Skip conditions:**
+- `--internal-check=none` → skip this entire substep.
+- No other skip conditions. Unlike skeleton, contract tier runs even when the spec declares no Contract block — in that case it runs in **cross-repo mode** (compare implementations against each other) and emits a `warning` that spec is incomplete.
+
+**Inputs to this step:**
+- `spec_contracts[scope][symbol]` from Step 3 (may be empty or partial)
+- `repo_contracts[repo_name][symbol]` — flattened from each sub-agent's `contract` field on every method/function (see Step 2 and `shared/api-extraction.md` E.4b)
+
+**Comparison rules.** For each `(symbol, repo)` pair:
+
+1. **Inputs validation parity.**
+   - If spec declares Contract: for each spec input, every repo must have a matching `{condition, reject_with}` entry. Missing validation → FAIL `critical` `"Repo {R} method {M} does not reject {param} when {condition} — spec requires reject_with={ErrorType}"`. Wrong error type → FAIL `critical`. Condition phrasing differs → `info` (the important thing is that the rejection exists with the correct error).
+   - If spec is silent: cross-repo comparison. If any repo has a validation that another repo lacks for the same parameter, flag as `critical` `"Repo {R1} rejects {param} when {cond} (raises {E}) but repo {R2} does not — intent divergence"`.
+
+2. **Errors raised parity.**
+   - Spec-declared: the set of error types raised by each repo must equal the spec's `### Errors` set. Extra error → `warning` `"Repo {R} raises {E} from {M} which is not in spec contract"`. Missing error → FAIL `critical`. Error code mismatch (error type name matches but code differs) → FAIL `critical`.
+   - Spec silent: set equality across repos. Any divergence → `critical`.
+
+3. **Side-effect order parity.**
+   - Spec-declared: use longest-common-subsequence diff between spec `### Side Effects` and each repo's extracted `side_effects[]`. Missing effect → `critical`. Reordered effect (e.g., spec says validate → acquire_lock, repo says acquire_lock → validate) → `critical` — order matters because partial-failure observability depends on it. Extra effect → `warning`.
+   - Spec silent: cross-repo order comparison. Divergence → `critical`.
+
+4. **Return shape parity.**
+   - Spec-declared: repo's extracted return shape must match spec's `### Returns`. Mismatch → `critical`.
+   - Spec silent: cross-repo. Divergence → `critical`.
+
+5. **Properties parity.** For each of `async`, `thread_safe`, `pure`, `idempotent`, `reentrant`:
+   - Spec-declared: repo's extracted value must match spec (true/false/null semantics — `null` from repo means "not statically determinable" and is compared only to other `null`s, not to true/false). Mismatch true-vs-false → `critical`. Mismatch true/false-vs-null → `warning` (extraction limit, not necessarily a bug).
+   - Spec silent: cross-repo. Any repo declaring opposite of another → `critical`. All null → skip (not inferable in any language, defer to behavior tier).
+
+6. **Cross-reference with Algorithm (skeleton tier).** If both Contract and Algorithm are declared for the same method, verify the Algorithm checkpoint sequence corresponds to the Contract's Side Effects order. Divergence → `warning` `"Contract side_effects order does not match Algorithm checkpoint order for {M} — spec is internally inconsistent"`. This is a spec-consistency finding, not per-repo.
+
+**Output format:**
+
+```
+┌──────────────────────────────┬──────┬────────┬──────┬──────┬──────┐
+│ Registry.register — Contract │ Spec │ Python │  TS  │  Go  │ Rust │
+├──────────────────────────────┼──────┼────────┼──────┼──────┼──────┤
+│ inputs.id.validation         │ REQ  │  ✓     │  ✓   │ MISS │  ✓   │
+│ inputs.id.reject_with        │INVID │ INVID  │ INVID│ ERR  │INVID │
+│ errors.DuplicateError        │ REQ  │  ✓     │  ✓   │  ✓   │  ✓   │
+│ errors.DependencyError       │ REQ  │  ✓     │ MISS │  ✓   │  ✓   │
+│ side_effect[1] acquire_lock  │ REQ  │  ✓     │ MISS │  ✓   │  ✓   │
+│ side_effect[5] emit event    │ REQ  │  ✓     │  ✓   │ MISS │  ✓   │
+│ return.on_success            │ None │ None   │ void │ error│ ()   │
+│ property.thread_safe         │ true │ true   │ false│ true │ true │
+│ property.idempotent          │false │ false  │ true │false │ false│
+└──────────────────────────────┴──────┴────────┴──────┴──────┴──────┘
+```
+
+**Anti-pattern guard.** Sub-agents MUST NOT infer properties they cannot observe — return `null` rather than guessing. Main context's comparison logic treats `null` as "unknown", not as "false".
+
+**Store as `phase_a_contract_results`** for inclusion in Step 5 and Step 9 reports. Every FAIL / WARN row becomes a finding with the structure:
+```
+{
+  finding_id: "A-C-{seq}",
+  severity: critical|warning|info,
+  symbol: "Registry.register",
+  row: "inputs.id.reject_with",
+  spec_says: "InvalidIdError(INVALID_ID)",
+  repos_disagree: {python: "InvalidIdError(INVALID_ID)", typescript: "InvalidIdError(INVALID_ID)", go: "Error(generic)", rust: "InvalidIdError(INVALID_ID)"},
+  location: "apcore-go/src/registry.go",
+  fix_hint: "Go implementation should raise InvalidIdError with code INVALID_ID (not generic error) when id fails pattern match"
+}
+```
+
+The `location` field points to the implementation file that needs changing (for spec-silent cross-repo divergence, pick the repo that is the outlier; for spec-authority divergence, the location is every non-matching repo).
+
+---
+
 #### 4.4 Store Phase A Results
 
 Store the full evaluated checklist as `phase_a_results`:
@@ -498,6 +589,15 @@ Cross-implementation:
   Type mismatch: {N}
   Trait/interface satisfaction gaps: {N}
   Multi-constructor coverage gaps: {N}
+
+Internal contract (--internal-check >= contract — DEFAULT):
+  Methods with spec Contract: {N}
+  Methods in cross-repo-only mode (spec silent): {N}
+  Validation rule divergences: {N}
+  Error raised divergences: {N}
+  Side-effect order divergences: {N}
+  Return shape divergences: {N}
+  Property divergences: {N}
 
 Internal skeleton (--internal-check >= skeleton):
   Methods with spec skeleton: {N}
@@ -700,9 +800,14 @@ Cross-implementation:
   Total: {N} | Match: {N} | Missing: {N} | Mismatch: {N} | Naming: {N} | Type: {N}
   Trait/interface gaps: {N} | Multi-constructor gaps: {N}
 
+Internal contract (--internal-check >= contract — DEFAULT):
+  Methods checked: {N} | Pass: {N} | Validation divergences: {N} | Error divergences: {N}
+  Side-effect divergences: {N} | Return-shape divergences: {N} | Property divergences: {N}
+  (omitted entirely if --internal-check=none)
+
 Internal skeleton (--internal-check >= skeleton):
   Methods checked: {N} | Pass: {N} | Missing checkpoint: {N} | Reordered: {N} | No instrumentation: {N}
-  (omitted entirely if --internal-check=none or no spec skeletons defined)
+  (omitted entirely if --internal-check=none or --internal-check=contract, or if no spec skeletons defined)
 
 ═══ PHASE B: Documentation Consistency ═══
 
@@ -785,8 +890,8 @@ Use the `# Project Review:` header with a **dynamic scope description** (derived
 | Sync Severity | Review Severity | Condition |
 |---------------|-----------------|-----------|
 | critical | blocker | Missing API (symbol defined in spec but absent from implementation); missing trait/interface satisfaction; missing constructor variant |
-| critical | critical | Signature mismatch, type mismatch, spec chain contradiction; **skeleton checkpoint missing or reordered** (Step 4A); **behavioral divergence** from tester (Step 7.5) |
-| warning | warning | Naming inconsistency, doc mismatch, missing README section; **skeleton has extra checkpoint not in spec**; **flaky behavior test** from tester |
+| critical | critical | Signature mismatch, type mismatch, spec chain contradiction; **contract validation/error/side-effect/return/property divergence** (Step 4B); **skeleton checkpoint missing or reordered** (Step 4A); **behavioral divergence** from tester (Step 7.5) |
+| warning | warning | Naming inconsistency, doc mismatch, missing README section; **spec silent on Contract (cross-repo-only mode)**; **contract property null vs true/false** (extraction limit); **skeleton has extra checkpoint not in spec**; **flaky behavior test** from tester |
 | info | _(skip)_ | Not included — info-level findings are not actionable bugs |
 
 **Rules:**
