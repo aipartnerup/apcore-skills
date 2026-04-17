@@ -193,7 +193,7 @@ Wait for audit to complete. Parse the saved report for:
 
 Skip if the scope contains only 1 impl repo per language group (single-SDK case).
 
-Invoke `/apcore-skills:sync --scope {scope-mapping} --internal-check=contract --save {ecosystem_root}/release-sync-{version}.md`.
+Invoke sync with the scope mapping below; the save path depends on whether `--dry-run` is active (see Step 2.5's dry-run handling prelude).
 
 Scope mapping:
 - `core` → `--scope core`
@@ -201,8 +201,10 @@ Scope mapping:
 - `all` → `--scope all`
 - `integrations` → skip sync (integrations have no cross-language peers by design)
 
-Normal run: `--save {ecosystem_root}/release-sync-{version}.md`.
-Dry-run: `--save {mktemp}/release-sync-{version}.md`.
+Normal run: `/apcore-skills:sync --scope {mapped} --save {ecosystem_root}/release-sync-{version}.md`
+Dry-run: `/apcore-skills:sync --scope {mapped} --save {mktemp}/release-sync-{version}.md`
+
+(`--internal-check=contract` is the sync default since v0.10; no need to pass it explicitly.)
 
 Wait for sync to complete. Parse the saved report for:
 - CRITICAL findings in Phase A (spec ↔ impl) and Phase B (docs)
