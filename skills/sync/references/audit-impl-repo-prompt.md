@@ -12,6 +12,19 @@ It does NOT contain PRD/SRS/Tech Design/Test Plan/Feature Specs.
 VERIFIED API (ground truth from Phase A):
 {verified_api for this repo — the confirmed-correct API symbols, signatures, types}
 
+=== FINDING SUPPRESSION GATE (applies to every scope below) ===
+
+Before emitting ANY finding, pass the candidate through:
+
+1. **Reachability** — Is the inconsistency actually user-visible? A README or example that users copy-paste IS user-visible. An internal-only doc comment that drifts from code is lower priority. If you cannot point to a real user path where this drift causes harm, downgrade or drop.
+2. **Concrete vs speculative** — Drop findings justified by "if a user ever tries X" or "someone copying this might hit Y" unless the example is demonstrably broken against the verified API. Speculation is not evidence; a failing code example IS.
+3. **Severity calibration** —
+   - `critical` = documented API call that will fail at runtime against current code (wrong method name, wrong param count, removed class, wrong import path in a runnable snippet)
+   - `warning` = drift that is confusing but not runtime-breaking (param name differs between README and docs but same position and type; outdated description)
+   - `info` = cosmetic (formatting, minor phrasing)
+   Wording-preference differences and stylistic doc choices never escalate to critical.
+4. **Zero findings is valid** — If a scope (README / API refs / examples) passes cleanly, emit it with a 1-2 line evidence note ("scanned README §Quick Start, 4 API references, all match verified API at src/..."). Do NOT pad with low-severity findings. Use `inconclusive` when ambiguous — never fabricate.
+
 === SCOPE 1: README ===
 
 1. Read README.md

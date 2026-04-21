@@ -9,6 +9,19 @@ Audit internal documentation consistency in {doc_repo_path}.
 This is a DOCUMENTATION REPO containing specs and feature definitions. Check that
 all documents are internally consistent — no contradictions between layers.
 
+=== FINDING SUPPRESSION GATE (applies to every scope below) ===
+
+Before emitting ANY finding, pass the candidate through:
+
+1. **Concrete contradiction vs speculative drift** — A contradiction exists when two documents make opposing concrete claims about the same symbol (e.g., PRD says `scan()`, tech design says `discover()`). Different phrasings of the same concept, different level of detail, or one document elaborating beyond another are NOT contradictions. Drop findings that only show "documents say different words" without showing opposing claims.
+2. **User-facing impact** — Is this contradiction reachable by any downstream reader (spec writer, SDK implementer, test author)? If one document is a stale draft nobody reads, that is a separate hygiene issue — flag as info, not critical.
+3. **Severity calibration** —
+   - `critical` = contradiction that will cause implementers to build the wrong thing (opposing signatures, opposing types, opposing behavior contracts)
+   - `warning` = drift that creates confusion but is resolvable by context (terminology divergence, outdated description, section missing from one layer but implied elsewhere)
+   - `info` = cosmetic / structural (formatting, cross-link rot, layer ordering)
+   Missing sections in optional documents (PRD, SRS — which may legitimately not exist for small features) default to info, not warning.
+4. **Zero findings is valid** — If the spec chain is internally consistent, emit the scope with a 1-2 line evidence note ("compared PRD §3, SRS §2.1, tech-design §4.2 for symbol X — all three agree on signature and behavior"). Do NOT pad with low-severity findings. Use `inconclusive` when a document's claim is ambiguous — never invent a contradiction.
+
 === SCOPE 1: Spec Chain Consistency ===
 
 Read all available documents from the spec chain:

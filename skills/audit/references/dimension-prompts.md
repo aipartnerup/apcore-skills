@@ -4,6 +4,24 @@ Each dimension is an independent sub-agent prompt. Variables common to all: `{re
 
 ---
 
+## Finding Suppression Gate (applies to every dimension below)
+
+Before emitting ANY finding, each sub-agent MUST pass the candidate through these five checks. A finding that fails any check is dropped or downgraded, not reported as-is.
+
+1. **Reachability** — Is this failure reachable under the project's actual use case? Not a hypothetical attacker, not a contrived input, not a "what if someone...". If you cannot cite a real call site or real config source that triggers this path, drop it.
+2. **Trust boundary** — If this is a security finding (injection, SSRF, path traversal, deserialization exec, etc.), is the input source genuinely external (network / untrusted user / cross-trust-boundary file upload)? Internal dev-tool data flow (the project's own files, hard-coded values, type-checked internal calls, scanner output from developer-owned source) does NOT qualify as a trust boundary. Drop security findings on internal flows, or downgrade to warning with an explicit "trust-boundary: internal" note.
+3. **Concrete vs speculative** — Drop findings whose justification begins with "if X ever happens", "could theoretically", "in case someone...", "a malicious Y might...", or similar. Speculation is not evidence. If the failure requires a contrived input nobody produces today, it is not a bug.
+4. **Severity calibration** —
+   - `critical` = demonstrable bug with a reproducible failure mode under the project's actual use case (cite the call site)
+   - `warning` = real but non-breaking (inconsistency across repos, style divergence, defensive-improvement opportunity, edge case in internal code)
+   - `info` = cosmetic or trend signal
+   Design-preference disagreements, defensive-code style divergences, and "this could be more robust" suggestions MAX OUT at warning. Never escalate them to critical. A finding whose only impact is "the other SDK is stricter" is warning, not critical.
+5. **Zero findings is valid** — If every check in a dimension passes, emit `FINDING_COUNT: 0` with a 1-2 line note of what you checked and why it is clean (cite evidence: "scanned all public methods in `src/registry/*.py`, all have matching guards at line-of-first-use"). Do NOT fabricate low-severity findings to pad the report. An evidenced empty dimension is a stronger signal than a padded one. When evidence is genuinely ambiguous, emit `inconclusive` with a reason — never invent a finding to fill the slot.
+
+Apply this gate to every candidate finding, in every dimension, before formatting the output block.
+
+---
+
 ## D1 — API Surface Audit
 
 ```
@@ -493,11 +511,11 @@ For every (symbol) that appears in spec_contracts OR in more than one repo_contr
 1. Inputs validation parity:
    - Spec-declared: every repo must have matching {condition, reject_with} for each spec input.
      Missing validation → CRITICAL. Wrong error type → CRITICAL.
-   - Spec silent: cross-repo. Any repo rejecting an input that another repo doesn't → CRITICAL.
+   - Spec silent: cross-repo. Divergence is WARNING by default — defensive-style differences (one repo validates early and raises E, another lets the same input reach the underlying call and raise via a different path) max at warning. **Escalate to CRITICAL only when the divergence produces OBSERVABLE contract divergence**: the same input triggers a different error *class* (a caller's `except E` would catch in one repo but not another), a different return shape, or a different side-effect ordering. Pure "stricter vs looser defensive check with the same ultimate outcome" = warning.
 
 2. Errors raised parity:
    - Spec-declared: set of error types must equal spec's ### Errors. Extra → WARNING. Missing → CRITICAL. Wrong code → CRITICAL.
-   - Spec silent: set equality across repos. Any divergence → CRITICAL.
+   - Spec silent: set equality across repos. Divergence is WARNING by default. **Escalate to CRITICAL only when a caller written against one repo's error types would silently fail against another** — e.g., one repo raises `DuplicateError`, another raises generic `ValueError`, and no common superclass covers both (user's `except DuplicateError` misses the other repo). Same-superclass divergences (e.g., both subclass `ApcoreError`) with identical error codes = warning.
 
 3. Side-effect order parity:
    - Spec-declared: LCS diff between spec order and each repo. Missing → CRITICAL. Reordered → CRITICAL. Extra → WARNING.

@@ -25,7 +25,7 @@ Comprehensive consistency audit across all apcore ecosystem repositories.
 
 ## Iron Law
 
-**AUDIT EVERY DIMENSION. CLASSIFY EVERY FINDING. A partial audit creates false confidence.**
+**APPLY EVERY APPLICABLE DIMENSION. EVIDENCE EVERY FINDING. A dimension returning zero findings — with a short note of what was checked — IS a valid result. Quota-filling manufactures false positives; unreachable / speculative findings are noise, not signal.**
 
 ## When to Use
 
