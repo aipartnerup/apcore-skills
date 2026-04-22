@@ -6,7 +6,7 @@ Each dimension is an independent sub-agent prompt. Variables common to all: `{re
 
 ## Finding Suppression Gate (applies to every dimension below)
 
-Before emitting ANY finding, each sub-agent MUST pass the candidate through these five checks. A finding that fails any check is dropped or downgraded, not reported as-is.
+Before emitting ANY finding, each sub-agent MUST pass the candidate through these six checks. A finding that fails any check is dropped or downgraded, not reported as-is.
 
 1. **Reachability** — Is this failure reachable under the project's actual use case? Not a hypothetical attacker, not a contrived input, not a "what if someone...". If you cannot cite a real call site or real config source that triggers this path, drop it.
 2. **Trust boundary** — If this is a security finding (injection, SSRF, path traversal, deserialization exec, etc.), is the input source genuinely external (network / untrusted user / cross-trust-boundary file upload)? Internal dev-tool data flow (the project's own files, hard-coded values, type-checked internal calls, scanner output from developer-owned source) does NOT qualify as a trust boundary. Drop security findings on internal flows, or downgrade to warning with an explicit "trust-boundary: internal" note.
@@ -16,9 +16,54 @@ Before emitting ANY finding, each sub-agent MUST pass the candidate through thes
    - `warning` = real but non-breaking (inconsistency across repos, style divergence, defensive-improvement opportunity, edge case in internal code)
    - `info` = cosmetic or trend signal
    Design-preference disagreements, defensive-code style divergences, and "this could be more robust" suggestions MAX OUT at warning. Never escalate them to critical. A finding whose only impact is "the other SDK is stricter" is warning, not critical.
-5. **Zero findings is valid** — If every check in a dimension passes, emit `FINDING_COUNT: 0` with a 1-2 line note of what you checked and why it is clean (cite evidence: "scanned all public methods in `src/registry/*.py`, all have matching guards at line-of-first-use"). Do NOT fabricate low-severity findings to pad the report. An evidenced empty dimension is a stronger signal than a padded one. When evidence is genuinely ambiguous, emit `inconclusive` with a reason — never invent a finding to fill the slot.
+5. **Zero findings is valid** — If every check in a dimension passes, emit `FINDING_COUNT: 0` with a 1-2 line note of what you checked and why it is clean (show the verification: `"grep -rn 'register' src/apcore/registry/*.py → 7 matches, all with RE_ID guard at line before insert"`, not a narrative summary). Do NOT fabricate low-severity findings to pad the report. An evidenced empty dimension is a stronger signal than a padded one. When evidence is genuinely ambiguous, emit `inconclusive` with a reason — never invent a finding to fill the slot.
+6. **Factual verifiability** — If the finding's `detail` or `category` makes a falsifiable claim about the codebase, the finding MUST include the verification artifact in `evidence` or `detail`. Trigger phrases: `dead export`, `dead code`, `unused`, `unused_internal`, `unused_config`, `unused_dep`, `duplicate`, `duplicates`, `parallel_impl`, `parallel implementation`, `reimplements`, `copy of`, `only used in`, `only referenced in`, `never called`, `never invoked`, `zero references`, `zero reads`, `no callers`, `reachability`, `stale`, `scope creep`, `N lines`, `exceeds N lines`. When triggered, the finding MUST carry ONE of:
+   - **(a) Command + output** — a `grep -rn` / `rg` / equivalent search command line AND at least one matched-line from its output (or the explicit string `0 matches` when claiming absence). A narrative paraphrase like `"grep returns only the declaration"` or `"scanned src/, no callers"` is NOT evidence — paste the actual output lines.
+   - **(b) Explicit file:line citations** — for cross-repo claims (`duplicate`, `parallel_impl`, `inconsistent with`), cite BOTH sides with `{repo}/{path}:{line}` so the reviewer can verify both exist. For "only used in X", cite the original definition AND the grep proving no other uses. For "N lines" / "exceeds N lines", cite the start:end line range.
+   - **(c) Cross-directory scope for dead-code claims** — `dead_export` / `unused` claims must search at least `src/` + `tests/` (and the examples directory if present). A dead-code claim whose verification is limited to one directory will be dropped by the orchestrator. State the search scope explicitly: `"grep -rn 'ErrorCodeMap' src/ tests/ examples/ → only matches in src/registry.ts:111"`.
+
+   Failure mode this gate exists to catch: a sub-agent writes `"grep returns only the declaration; ERROR_CODE_MAP has zero reads"` when the symbol is actually read elsewhere in the same file. The only defense is to require the command output to be visible in the finding.
 
 Apply this gate to every candidate finding, in every dimension, before formatting the output block.
+
+### Finding format — evidence field (all dimensions)
+
+The uniform finding format for D1–D10 is:
+
+```
+- severity: {critical|warning|info}
+  repo: {repo-name}
+  detail: {description — what is wrong}
+  location: {file:line when applicable}
+  fix: {suggested fix}
+  evidence: {REQUIRED when detail/category matches any Gate 6 trigger phrase — paste the grep/rg command AND matched-line output, OR explicit cross-site file:line citations. A narrative summary is insufficient.}
+```
+
+D9 (`category` field is mandatory) and D10 (`spec_says` / `repos_disagree` / `symbol` fields) extend this base format; the evidence rule applies equally. For D9 findings whose `category` is one of `dead_export | unused_internal | duplicate | parallel_impl | reachability | scope_creep | stub_noop | loc_growth | unused_config | unused_dep` — Gate 6 is ALWAYS triggered; evidence MUST be present.
+
+**Acceptable evidence example (D9 dead_export):**
+```yaml
+- severity: warning
+  repo: apcore-typescript
+  category: dead_export
+  detail: "Registry.scanLegacyDir is exported but has no external callers"
+  location: "src/registry.ts:156"
+  fix: "Delete the method and its export; the only internal call at src/registry.ts:203 is itself inside a dead code path."
+  evidence: |
+    grep -rn "scanLegacyDir" apcore-typescript/ --include='*.ts'
+    apcore-typescript/src/registry.ts:156:  scanLegacyDir(path: string): Module[] {
+    apcore-typescript/src/registry.ts:203:    // return this.scanLegacyDir(fallback);  <-- commented out
+    apcore-typescript/src/index.ts:42:export { Registry } from "./registry.js";
+    → Only the definition and one commented-out self-reference; no external callers
+      in src/, tests/, or examples/. Verified across 3 directories.
+```
+
+**Rejected evidence example (would be dropped by Gate 6):**
+```yaml
+detail: "Registry.scanLegacyDir appears unused"
+evidence: "grep returns only the definition"
+```
+The second example is dropped because the grep command AND the actual output are not visible — the claim cannot be verified from the finding alone.
 
 ---
 
@@ -439,6 +484,13 @@ FINDINGS:
   detail: {description}
   location: {file:line if applicable}
   fix: {suggested fix — deletion, merge, inline, etc.}
+  evidence: |
+    {MANDATORY for every D9 finding — Gate 6 always triggered on D9 categories.
+     Paste the actual grep/rg command AND its matched-line output (or "0 matches"),
+     covering at least src/ + tests/ + examples/ for dead-code claims.
+     For duplicate / parallel_impl / reimplements: cite BOTH sides with {repo}/{path}:{line}.
+     A narrative summary like "grep returns only the declaration" is insufficient — it will
+     be dropped by the orchestrator's Step 2.5.1 verification scan.}
 BLOAT_SUMMARY:
 - repo: {repo-name}
   total_loc: {N}

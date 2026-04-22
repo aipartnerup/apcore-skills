@@ -933,6 +933,8 @@ apcore-skills sync — Unified Consistency Report
 
 Scope: {scope} | Languages: {langs} | Date: {date}
 Phases: A (spec ↔ code) + B (documentation)
+Noise-Control: {n_warning_consolidated + n_info_nitpick} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick
+{if n_warning_consolidated > 0:} Consolidated root-cause groups: {(file, category) pairs, comma-separated}
 
 Finding ID namespaces:
   A-{seq}     Phase A signature / type / naming findings (Step 4.1–4.3)
@@ -1028,6 +1030,52 @@ INFO:
 ```
 
 If `--save` flag: write report to the canonical default from `shared/ecosystem.md` §0.6a: `{ecosystem_root}/sync-report-{YYYY-MM-DD}.md` (or the explicit path if one was provided).
+
+#### 9.0 Noise-Control Pass (RUN FIRST — before rendering the combined-report template above)
+
+**Execution-order note.** This sub-section is documented alongside 9.1 for readability, but it executes FIRST — before Step 9 emits the combined-report template (the block starting `apcore-skills sync — Unified Consistency Report` near the top of Step 9). The combined-report header's `Noise-Control:` line and its SUMMARY table both reflect POST-consolidation counts. If you render the combined report first and then run this pass, the combined report will show stale counts — wrong.
+
+Sync already enforces strong evidence at emission time — Step 4B findings carry `location`, Step 4C findings carry structured `evidence: {lang: {file, line, snippet}}`, and the Anti-Rationalization Table (line 64) rejects reports without citation. The remaining noise risk is **repetition**: when the same root cause (e.g., "spec silent on Contract for method X") produces one finding per language peer, or when cross-language divergence produces per-language echo findings, the review-compatible output can balloon to many per-file entries that overload `/code-forge:fix --review`.
+
+Run this consolidation pass over the aggregated Phase A + Phase B findings set BEFORE either the combined-report template or 9.1 formats them:
+
+**9.0.1 Same-(file, category) merge:**
+Group warning-level findings by `(file, category)` where `category` is the sync internal category (e.g., `contract.inputs_validation`, `contract.errors_raised`, `contract.side_effect_order`, `spec_silent`, `api_surface.signature_mismatch`). When a group has ≥3 findings targeting the same file and same category, merge into ONE entry:
+
+```
+- severity: warning  (use the highest severity in the group)
+  file: {target file}
+  line: {earliest line among merged findings}
+  title: [{finding_id_prefix}-MERGED] {N} {category} issues on {file}
+  description: |
+    {N} {category} findings consolidated from {list of finding_ids}:
+    - {site 1 file:line}: {brief}
+    - {site 2 file:line}: {brief}
+    - ...
+  suggestion: "{one consolidated fix spanning every site}"
+  evidence: "{preserve every site's evidence; omit only if preservation produces >40 lines, in which case cite the N individual finding_ids for drill-down}"
+```
+
+Do NOT merge across files — cross-file repetition is often an intentional cross-cutting pattern worth preserving as distinct entries. Do NOT merge critical findings — merging dilutes the "this must be fixed" signal; a repo with 5 criticals in one file should show all 5.
+
+Track merged-away entries as `n_warning_consolidated`.
+
+**9.0.2 Info-level drop (review-compat never emits info anyway — this prunes the combined report):**
+For info findings that never reach 9.1 (severity map in 9.1 drops info), drop those whose `detail` matches the nitpick blocklist:
+- Pure rename-for-clarity without concrete ambiguity
+- Style swap (`consider using X instead of Y`) without named downside
+- Pure format/casing that doesn't cross a language boundary
+- Comment-for-self-documenting-name
+- Packaging / binary-name preferences outside sync's scope
+
+Track as `n_info_nitpick`. Cross-language style findings remain at their declared severity — those are D2-equivalent and belong at warning if cosmetic, critical if they break a naming contract.
+
+**9.0.3 Surface in combined-report header:**
+```
+Noise-Control: {n_warning_consolidated + n_info_nitpick} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick
+```
+
+If `n_warning_consolidated > 0`, also note the affected (file, category) pairs so the operator can see which root causes produced the echo findings — useful when tuning the deep-chain or contract-extraction prompts.
 
 #### 9.1 Review-Compatible Issue Report
 

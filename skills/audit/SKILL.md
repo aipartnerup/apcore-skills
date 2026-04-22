@@ -194,6 +194,77 @@ D11_FINDINGS:
 
 ---
 
+### Step 2.5: Noise-Control Validation (MANDATORY before Step 3)
+
+After all dimension sub-agents return and findings are collected, run this validation pass over the merged findings BEFORE formatting the Step 3 report. The pass applies the Gate 6 (Factual Verifiability) and info-inflation rules from `@references/dimension-prompts.md` to every finding the sub-agents emitted — the gate is enforced at emission time by each sub-agent, but this orchestrator pass is the final line of defense against sub-agents that summarized evidence instead of pasting it.
+
+Track drop counts per bucket — they surface in the Step 3 report summary.
+
+**2.5.1 Gate 6 verification scan (applies to critical, warning, info — all severities):**
+
+Scan every finding's `detail`, `category`, and `evidence` fields for Gate 6 trigger phrases:
+
+```
+dead export | dead code | unused | unused_internal | unused_config | unused_dep
+duplicate | duplicates | parallel_impl | parallel implementation | reimplements | copy of
+only used in | only referenced in | never called | never invoked
+zero references | zero reads | no callers
+reachability | stale | scope creep | stub | noop | no-op
+\d+ lines? | exceeds \d+ lines?
+```
+
+When a trigger matches, the finding MUST carry ONE of:
+- A search command line (e.g., `grep -rn`, `rg`, equivalent) **PLUS** at least one matched-output line (format `{file}:{line}:{content}`, OR the explicit string `0 matches` / `no matches`)
+- Explicit `{repo}/{path}:{line}` citations — for cross-repo claims both sides must be cited; for "only used in" claims the single site MUST be accompanied by a grep proving absence elsewhere
+- For `dead_export` / `unused` / `reachability` claims, the evidence must span at least `src/` AND `tests/` (and `examples/` if present) — state the scope in evidence, e.g. `"grep -rn X src/ tests/ examples/"`
+
+Findings failing this check are **dropped** (not downgraded — the factual claim is the load-bearing part of the finding; without verification it has no substance). Track as `n_unverified_claim`.
+
+**2.5.2 Info-level nitpick blocklist (DROP rule, applies to severity=info only):**
+
+Info findings are cosmetic by definition — they never reach `/code-forge:fix --review` (audit Step 3.1 severity map drops info) but they still consume reader attention in the ecosystem report. Drop info findings whose `detail` matches:
+
+- Pure rename-for-clarity: `rename \w+ to \w+` without a named concrete ambiguity
+- Style swap without named downside: `consider using X instead of Y`, `prefer X over Y`
+- Pure formatting/casing: `camelCase vs snake_case` without the symbol crossing a language boundary (cross-language is a D2 issue and belongs at warning, not info)
+- Packaging / binary name preferences: npm scope, bin name, `*.py` vs `*.pyi` layout — unless the audit scope explicitly includes packaging
+- Comment-style: `add a comment explaining X` where X is described by the code's own name
+- File-layout preferences: `move X to utils/`, `consolidate X under lib/` without a concrete coupling-cost demonstration
+
+Track as `n_info_nitpick`.
+
+**2.5.3 Info consolidation (MERGE rule):**
+
+Group surviving info findings by `(repo, dimension, category)`. When a group has ≥3 findings, merge them into ONE themed info entry listing every site. Do NOT merge across repos or across dimensions — cross-repo / cross-dimension repetition often signals a real pattern worth preserving as distinct entries.
+
+Themed merge format:
+```
+- severity: info
+  repo: {repo-name}
+  category: {dimension_category}
+  detail: "{N} instances of {theme}: {brief theme description}. Sites: {file:line, file:line, ...}"
+  fix: "{one consolidated fix instruction covering all sites}"
+  evidence: "{the search command that enumerates the sites, plus the matched-line list}"
+```
+
+Track merged-away entries (original count − 1 per group) as `n_info_consolidated`.
+
+**2.5.4 Track totals and surface in Step 3 header:**
+
+Compute `n_total_drops = n_unverified_claim + n_info_nitpick + n_info_consolidated` and include a one-line `Noise-Control` header in the Step 3 report:
+
+```
+Noise-Control: {n_total_drops} findings suppressed · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated
+```
+
+If `n_unverified_claim > 0`, also print a per-dimension breakdown so the operator can see which sub-agent prompt is under-producing evidence (this feeds back into skill tuning):
+
+```
+  Unverified factual claims dropped by dimension: D9:{N}  D10:{N}  D1:{N}  ...
+```
+
+---
+
 ### Step 3: Aggregate and Display Report
 
 Collect all findings from sub-agents. Aggregate by severity.
@@ -204,6 +275,9 @@ apcore-skills audit — Ecosystem Consistency Report
 Date: {date}
 Scope: {scope}
 Repos audited: {count}
+Noise-Control: {n_total_drops} findings suppressed · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated
+{if n_unverified_claim > 0:}
+  Unverified claims dropped by dimension: {D9: N, D10: N, D1: N, ...}
 
 ═══ SUMMARY ═══
 
