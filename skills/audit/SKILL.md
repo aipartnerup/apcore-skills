@@ -37,7 +37,7 @@ Comprehensive consistency audit across all apcore ecosystem repositories.
 ## Command Format
 
 ```
-/apcore-skills:audit [--scope core|mcp|integrations|all] [--fix] [--no-deep-chain] [--save report.md]
+/apcore-skills:audit [--scope core|mcp|integrations|all] [--fix] [--no-deep-chain] [--strict] [--save report.md]
 ```
 
 | Flag | Default | Description |
@@ -45,7 +45,13 @@ Comprehensive consistency audit across all apcore ecosystem repositories.
 | `--scope` | **cwd** | Which repo group to audit. **If omitted, defaults to the current working directory's repo only.** Use `--scope all` for full ecosystem audit. |
 | `--fix` | off | Auto-fix issues where safe |
 | `--no-deep-chain` | off (D11 runs by default) | Skip D11 (cross-language deep-chain analysis). Use for fast audits where you only need D1–D10 shape-level checks. D11 adds one sub-agent per logical module; disabling saves time on large module sets. |
+| `--strict` | off (lean mode) | Re-enable noise-prone finding classes that are suppressed by default. By default the audit suppresses language-idiom downgrades (`defensive-depth`, `error-class-name-only`, `async-no-work`, `constructor-name-idiom`, `type-wrapping`), D2 style-only nits (clippy lints whose suggestion is just `allow(...)` or rename-for-idiom), and findings tagged `[verify-spec-first]` (where the audit cannot independently determine which spec interpretation is authoritative). Pass `--strict` before a release audit when you want the full surface. **Real bugs are never suppressed** — `critical`/`blocker` findings, spec violations, dead code (D9), and API surface gaps (D1) always surface regardless of this flag. |
 | `--save` | off | Save report to file |
+
+### Lean vs Strict — when to use which
+
+- **Lean (default)** — answers "what should I actually fix?". Use during iterative cleanup, when the previous audit already passed lean but warnings keep regenerating, or when triaging a fresh repo to find load-bearing problems. Lean mode is designed to terminate: once real bugs are fixed, lean mode reaches zero warnings and stays there.
+- **Strict (`--strict`)** — answers "what is every divergence anyone could possibly notice?". Use before a major release, when chasing API-surface symmetry across SDKs, or when investigating a specific style/idiom decision. Strict mode does NOT necessarily reach zero — some findings stay open as accepted policy (e.g., brand-consistency naming).
 
 ## Audit Dimensions
 
@@ -100,7 +106,9 @@ Step 0 (ecosystem) → Step 1 (parse args) → Step 2 (parallel audits) → Step
 
 ### Step 1: Parse Arguments and Plan Audit
 
-Parse `$ARGUMENTS` for flags.
+Parse `$ARGUMENTS` for flags. Recognized flags: `--scope`, `--fix`, `--no-deep-chain`, `--strict`, `--save`. Unknown flags must be reported back to the user as an error before any sub-agent is spawned.
+
+**Set `STRICT_MODE`:** `true` if `--strict` appears anywhere in `$ARGUMENTS`, else `false`. Pass this value to the Step 2.5.5 suppression pass and surface it in the Step 3 report header.
 
 #### 1.1 CWD-based Default Scope
 
@@ -281,12 +289,25 @@ Themed merge format:
 
 Track merged-away entries (original count − 1 per group) as `n_info_consolidated`.
 
-**2.5.5 Track totals and surface in Step 3 header:**
+**2.5.5 Strict-mode suppression (lean by default — applies LAST in the drop-pipeline, before 2.5.6 renders totals):**
 
-Compute `n_total_drops = n_d10_d11_dedup + n_unverified_claim + n_info_nitpick + n_info_consolidated` and include a one-line `Noise-Control` header in the Step 3 report:
+This pass enforces the lean/strict policy that is **shared with `apcore-skills:sync`**. Both skills consume the same rule set from a single authoritative document so the semantics never drift.
+
+@../shared/strict-suppression.md
+
+**Audit-specific integration notes:**
+- Apply this pass AFTER 2.5.1 (d10-d11 dedup), 2.5.2 (gate 6), 2.5.3 (info nitpick blocklist), and 2.5.4 (info consolidation), and BEFORE 2.5.6 renders the Noise-Control header (so the rendered total includes `n_strict_suppressed`).
+- For rule **(b) style-only naming findings**, the audit-specific category is `D2` — match `dimension == "D2"`.
+- For the **hard guarantees**, audit-specific dimension ids are: D9 for dead-code, D10 for spec-violation, D11 for chain-level structural divergence, D1 for API surface gap. The shared doc references these by category; map them through audit's `dimension` + `category` fields.
+
+---
+
+**2.5.6 Track totals and surface in Step 3 header:**
+
+Compute `n_total_drops = n_d10_d11_dedup + n_unverified_claim + n_info_nitpick + n_info_consolidated + n_strict_suppressed` and include a one-line `Noise-Control` header in the Step 3 report:
 
 ```
-Noise-Control: {n_total_drops} findings suppressed · {n_d10_d11_dedup} d10-d11-deduplicated · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated
+Noise-Control: {n_total_drops} findings suppressed · {n_d10_d11_dedup} d10-d11-deduplicated · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated · {n_strict_suppressed} strict-only ({"hidden — pass --strict to see" if !STRICT_MODE else "shown"})
 ```
 
 If `n_unverified_claim > 0`, also print a per-dimension breakdown so the operator can see which sub-agent prompt is under-producing evidence (this feeds back into skill tuning):
@@ -306,8 +327,9 @@ apcore-skills audit — Ecosystem Consistency Report
 
 Date: {date}
 Scope: {scope}
+Mode: {"strict (all findings)" if STRICT_MODE else "lean (style/idiom/verify-spec suppressed — pass --strict for all)"}
 Repos audited: {count}
-Noise-Control: {n_total_drops} findings suppressed · {n_d10_d11_dedup} d10-d11-deduplicated · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated
+Noise-Control: {n_total_drops} findings suppressed · {n_d10_d11_dedup} d10-d11-deduplicated · {n_unverified_claim} unverified-factual-claim · {n_info_nitpick} info-nitpick · {n_info_consolidated} info-consolidated · {n_strict_suppressed} strict-only ({"hidden — pass --strict to see" if !STRICT_MODE else "shown"})
 {if n_unverified_claim > 0:}
   Unverified claims dropped by dimension: {D9: N, D10: N, D1: N, ...}
 

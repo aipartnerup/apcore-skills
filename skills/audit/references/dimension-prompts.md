@@ -26,6 +26,34 @@ Before emitting ANY finding, each sub-agent MUST pass the candidate through thes
 
 Apply this gate to every candidate finding, in every dimension, before formatting the output block.
 
+### `[verify-spec-first]` convention (all dimensions — emit when applicable)
+
+Some findings are valid divergences but the audit cannot **independently** determine which version is correct without re-reading the authoritative spec doc. The classic case is a recent breaking-change to a default value where one implementation has the new default and another has the old, and the audit's local copy of the spec might itself be stale.
+
+When the sub-agent reaches this state — divergence is real, but the *direction* of the fix depends on which spec interpretation is authoritative — append the literal marker `[verify-spec-first]` to the finding's `detail` field. The orchestrator's Step 2.5.6 pass uses this marker to suppress the finding in lean mode (operators chasing real bugs should not be blocked by spec-version archaeology), while strict mode still surfaces it.
+
+**Emit `[verify-spec-first]` when ALL of the following hold:**
+1. The divergence is between language implementations only (no peer is anchored to a spec assertion the sub-agent can quote with line citation), OR the only spec citation is to a doc the sub-agent suspects is older than at least one implementation.
+2. The recommendation in `fix` is **bidirectional** — "change A to match B, or vice versa, depending on which is authoritative" — rather than a single concrete change.
+3. A concrete spec-doc path is named in the finding (so a reviewer knows which file to verify).
+
+**Do NOT emit `[verify-spec-first]`:**
+- When the spec is clearly the authority and one or more impls violate it → this is a normal `critical` / `warning` spec-violation finding with a unidirectional fix.
+- As a hedge for low-confidence findings — those belong in the `inconclusive` severity bucket, not lean-mode suppression. The marker is for *high-confidence-divergence + ambiguous-direction*, not low-confidence anything.
+
+**Example:**
+```yaml
+- severity: warning
+  repo: apcore-mcp-python
+  symbol: OpenAIConverter.convert_descriptor
+  category: property_mismatch
+  detail: "strict default differs across SDKs: Python=False, TS=True, Rust requires explicit param. Per converters/openai.ts:152 comment the canonical default is True post-0.14.0, but apcore-mcp/docs/features/openai-converter.md was last touched pre-0.14.0 and does not state a default. [verify-spec-first]"
+  location: "apcore-mcp-python/src/apcore_mcp/converters/openai.py:100"
+  fix: "If post-0.14.0 spec default is True (per TS comment): change Python signature to strict=True and note breaking change in CHANGELOG. If pre-0.14.0 default of False is canonical: revert TS comment and align TS to False. Verify against apcore-mcp/docs/features/openai-converter.md HEAD before acting."
+```
+
+---
+
 ### Finding format — evidence field (all dimensions)
 
 The uniform finding format for D1–D10 is:

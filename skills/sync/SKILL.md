@@ -79,7 +79,7 @@ Unified consistency verification across all apcore ecosystem documentation and i
 ## Command Format
 
 ```
-/apcore-skills:sync [repo1,repo2,...] [--phase a|b|all] [--fix] [--scope core|mcp|all] [--lang python,typescript,...] [--internal-check none|contract|skeleton|behavior] [--deep-chain on|off] [--save]
+/apcore-skills:sync [repo1,repo2,...] [--phase a|b|all] [--fix] [--scope core|mcp|all] [--lang python,typescript,...] [--internal-check none|contract|skeleton|behavior] [--deep-chain on|off] [--strict] [--save]
 ```
 
 | Argument / Flag | Default | Description |
@@ -91,7 +91,13 @@ Unified consistency verification across all apcore ecosystem documentation and i
 | `--lang` | all discovered | Comma-separated list of languages to compare |
 | `--internal-check` | `contract` | Internal consistency tier. `none` = public API only. `contract` = **DEFAULT** — also compare behavioral contracts (inputs validation, errors raised, side-effect order, return shape, properties) via Step 4B, static. `skeleton` = contract + algorithm checkpoint sequences (Step 4A, static, requires source instrumentation). `behavior` = all static tiers + hand off to `tester` skill for runtime behavioral equivalence (Step 7.5, dynamic). Higher tiers include lower tiers. Function-level (helper) identity is intentionally NOT supported — see Anti-Rationalization Table. |
 | `--deep-chain` | `on` | Cross-language deep-chain analysis (Step 4C). When on, the orchestrator spawns one sub-agent **per logical module** and feeds it all N languages' source side-by-side. The sub-agent diffs call graphs, finds missing-validation / missing-registration / defensive-gap divergences that shape-level extraction (4B) cannot see. Forced off when `--internal-check=none`. Set `--deep-chain off` for fast sync (reduces sub-agent count, loses intent-level chain coverage). |
+| `--strict` | off (lean mode) | Re-enable noise-prone finding classes that are suppressed by default. By default sync suppresses language-idiom downgrades (`defensive-depth`, `error-class-name-only`, `async-no-work`, `constructor-name-idiom`, `type-wrapping`), style-only naming nits (lint-suppression-style suggestions), and findings tagged `[verify-spec-first]` (where the recommendation depends on which spec version is authoritative). Pass `--strict` before a release sync when you want the full surface. **Real bugs are never suppressed** — `critical`/`blocker`, spec violations, missing API, and chain-level structural divergences (missing-validation / missing-registration / semantic-divergence) always surface regardless. Identical semantics to `apcore-skills:audit --strict` — see `shared/strict-suppression.md`. |
 | `--save` | off | Save report to file |
+
+### Lean vs Strict — when to use which
+
+- **Lean (default)** — answers "what should I actually fix?". Use during iterative cleanup. Lean mode is designed to terminate at zero warnings once real bugs are fixed.
+- **Strict (`--strict`)** — answers "what is every divergence anyone could possibly notice?". Use before a major release or when chasing cross-language API/contract symmetry. Strict mode does NOT necessarily reach zero — some findings stay open as accepted policy.
 
 ### Internal Consistency Tiers
 
@@ -193,6 +199,7 @@ Parse `$ARGUMENTS` for all flags and positional repo names. Determine:
 - Scope groups and language filter
 - Fix mode
 - Target repos (from positional args, `--scope`, or CWD)
+- **`STRICT_MODE`** — set to `true` if `--strict` appears in `$ARGUMENTS`, else `false`. Pass to the Step 9.0.3 suppression pass and surface in the combined-report header.
 
 **Resolution priority:** Positional repo args > `--scope` flag > CWD-based default.
 
@@ -932,8 +939,9 @@ If `--save` flag: write report to the canonical default from `shared/ecosystem.m
 apcore-skills sync — Unified Consistency Report
 
 Scope: {scope} | Languages: {langs} | Date: {date}
+Mode: {"strict (all findings)" if STRICT_MODE else "lean (style/idiom/verify-spec suppressed — pass --strict for all)"}
 Phases: A (spec ↔ code) + B (documentation)
-Noise-Control: {n_warning_consolidated + n_info_nitpick} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick
+Noise-Control: {n_warning_consolidated + n_info_nitpick + n_strict_suppressed} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick · {n_strict_suppressed} strict-only ({"hidden — pass --strict to see" if !STRICT_MODE else "shown"})
 {if n_warning_consolidated > 0:} Consolidated root-cause groups: {(file, category) pairs, comma-separated}
 
 Finding ID namespaces:
@@ -1070,12 +1078,34 @@ For info findings that never reach 9.1 (severity map in 9.1 drops info), drop th
 
 Track as `n_info_nitpick`. Cross-language style findings remain at their declared severity — those are D2-equivalent and belong at warning if cosmetic, critical if they break a naming contract.
 
-**9.0.3 Surface in combined-report header:**
+**9.0.3 Strict-mode suppression (lean by default — applies LAST in the drop-pipeline, before 9.0.4 renders totals):**
+
+This pass enforces the lean/strict policy that is **shared with `apcore-skills:audit`**. Both skills consume the same rule set from a single authoritative document so the semantics never drift.
+
+@../shared/strict-suppression.md
+
+**Sync-specific integration notes:**
+- Apply this pass AFTER 9.0.1 (same-(file, category) merge) and 9.0.2 (info nitpick drop), and BEFORE 9.0.4 renders the Noise-Control header (so the rendered total includes `n_strict_suppressed`).
+- For rule **(b) style-only naming findings**, sync emits naming findings from Phase A Steps 4.1–4.3 (API surface, signature mismatch, naming convention) and Phase B (doc naming consistency). Match findings whose `category` is in `{naming, naming_convention, api_surface.naming, language_idiom}` AND severity is `warning`.
+- For the **hard guarantees**, sync-specific categories are:
+  - **Dead-code** (D9-equivalent): Phase B `bloat.*` categories — sync doesn't have a dedicated bloat dimension; if a bloat-class finding appears (e.g., `dead_export` from API surface), preserve it.
+  - **Spec violation** (D10-equivalent): Step 4B findings where `spec_says != "(not declared)"` — these are spec-anchored contract divergences. Preserve them.
+  - **Chain-level divergence** (D11-equivalent): Step 4C findings with `type` in `{missing-validation, missing-registration, semantic-divergence}`. Preserve them.
+  - **API surface gap** (D1-equivalent): Step 4 findings with `category == "missing_symbol"` or `category == "missing_method"`. Preserve them.
+
+**9.0.4 Surface in combined-report header:**
 ```
-Noise-Control: {n_warning_consolidated + n_info_nitpick} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick
+Mode: {"strict (all findings)" if STRICT_MODE else "lean (style/idiom/verify-spec suppressed — pass --strict for all)"}
+Noise-Control: {n_warning_consolidated + n_info_nitpick + n_strict_suppressed} suppressed · {n_warning_consolidated} warnings-consolidated · {n_info_nitpick} info-nitpick · {n_strict_suppressed} strict-only ({"hidden — pass --strict to see" if !STRICT_MODE else "shown"})
 ```
 
 If `n_warning_consolidated > 0`, also note the affected (file, category) pairs so the operator can see which root causes produced the echo findings — useful when tuning the deep-chain or contract-extraction prompts.
+
+When `n_strict_suppressed > 0` AND `STRICT_MODE == false`, append a one-line hint to the combined-report SUMMARY block (do NOT enumerate suppressed findings inline):
+
+```
+ℹ {n_strict_suppressed} additional findings hidden in lean mode (language-idiom, style, spec-verify). Re-run with --strict to see them.
+```
 
 #### 9.1 Review-Compatible Issue Report
 
